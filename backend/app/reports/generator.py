@@ -26,11 +26,6 @@ class CertificationReportGenerator:
         )
 
     def generate_pdf(self, analysis_result: dict, output_path: str) -> str:
-        if not HAS_WEASYPRINT:
-            raise ImportError("WeasyPrint kütüphanesi yüklü değil. 'pip install weasyprint' gereklidir.")
-
-        template = self.jinja_env.get_template("report.html")
-
         context = {
             'report_id': f"AJ-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}",
             'date': datetime.now().strftime('%Y-%m-%d %H:%M'),
@@ -48,11 +43,17 @@ class CertificationReportGenerator:
             'D_matrix': analysis_result.get('D_matrix', []),
         }
 
+        template = self.jinja_env.get_template("report.html")
         html_content = template.render(**context)
-        css_path = TEMPLATES_DIR / "styles.css"
 
-        html = weasyprint.HTML(string=html_content, base_url=str(TEMPLATES_DIR))
-        css = weasyprint.CSS(filename=str(css_path))
+        if HAS_WEASYPRINT:
+            css_path = TEMPLATES_DIR / "styles.css"
+            html = weasyprint.HTML(string=html_content, base_url=str(TEMPLATES_DIR))
+            css = weasyprint.CSS(filename=str(css_path))
+            html.write_pdf(output_path, stylesheets=[css])
+        else:
+            # Fallback to HTML file if WeasyPrint binary isn't available
+            with open(output_path, 'w', encoding='utf-8') as f:
+                f.write(html_content)
 
-        html.write_pdf(output_path, stylesheets=[css])
         return output_path

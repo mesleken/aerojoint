@@ -108,6 +108,15 @@ class MaterialsDB:
         self._save()
         return True
     
+    def delete_material(self, material_id: str) -> bool:
+        """Belirtilen ID'li özel malzemeyi kütüphaneden sil."""
+        if material_id not in self._materials:
+            raise ValueError(f"Malzeme '{material_id}' bulunamadı.")
+        
+        del self._materials[material_id]
+        self._save()
+        return True
+
     def _save(self):
         """Güncel malzeme verisini JSON dosyasına yaz."""
         data = {

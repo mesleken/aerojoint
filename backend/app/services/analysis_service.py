@@ -75,19 +75,31 @@ class AnalysisService:
             # Simple Parametric Quad Grid Fallback (Gmsh olmadan da çalışabilirlik)
             mesh_data, mesh_stats = self._create_fallback_grid(width, height, mesh_size_global)
 
-        # 3. Yükler ve Sınır Koşulları
+        # 3. Yükler ve Sınır Koşulları (Cıvata Sıkma Torku Etkisi Dahil)
         nodal_forces = {}
         total_applied_load = 0.0
 
         for h_idx, hole_in in enumerate(holes_in):
             load_mag = float(hole_in.get('load_magnitude', 0.0))
-            if load_mag > 0 and h_idx < len(mesh_data.hole_boundary_nodes):
-                total_applied_load += load_mag
+            torque = float(hole_in.get('torque', 0.0))
+            diameter = float(hole_in.get('diameter', 6.35))
+
+            # Cıvata Sıkma Torku (Clamp-up Effect / Washer Friction Alleviation)
+            # F_clamp = Torque / (K * d), K = 0.2
+            # Sürtünmeyle aktarılan yük: Delta_P = mu * F_clamp, mu = 0.3
+            eff_load = load_mag
+            if torque > 0 and diameter > 0:
+                F_clamp = torque / (0.2 * (diameter * 1e-3))
+                delta_P = 0.3 * F_clamp
+                eff_load = max(0.0, load_mag - delta_P)
+
+            if eff_load > 0 and h_idx < len(mesh_data.hole_boundary_nodes):
+                total_applied_load += eff_load
                 b_load = BearingLoad(
                     hole_x=float(hole_in['x']),
                     hole_y=float(hole_in['y']),
-                    diameter=float(hole_in['diameter']),
-                    load_magnitude=load_mag,
+                    diameter=diameter,
+                    load_magnitude=eff_load,
                     load_angle=float(hole_in.get('load_angle', 0.0))
                 )
                 h_nodes = mesh_data.hole_boundary_nodes[h_idx].get('nodes', [])
@@ -119,12 +131,13 @@ class AnalysisService:
         )
 
         # 5. Katman Bazlı Kırılma ve MoS Değerlendirmesi
+        selected_criterion = request_data.get('failure_criterion', 'Hashin')
         ply_results = []
         min_mos = float('inf')
         critical_ply_id = 0
         critical_angle = 0.0
         critical_mode = "None"
-        governing_criterion = "Hashin"
+        governing_criterion = selected_criterion
 
         for ply_idx, ply in enumerate(laminate.plies):
             ply_stresses_local = fem_result.ply_stresses[ply_idx]['nodal_stresses_local']
@@ -136,9 +149,17 @@ class AnalysisService:
             for stress_vec in ply_stresses_local:
                 s1, s2, t12 = stress_vec[0], stress_vec[1], stress_vec[2]
                 eval_res = self.failure_engine.evaluate_ply(s1, s2, t12, ply.material, ply_idx, ply.angle)
-                if eval_res.hashin_max_fi >= max_fi_ply:
-                    max_fi_ply = eval_res.hashin_max_fi
-                    crit_eval = eval_res
+                
+                if selected_criterion == 'Puck':
+                    puck_res = self.failure_engine.puck_criterion(s1, s2, t12, ply.material)
+                    if puck_res['max_fi'] >= max_fi_ply:
+                        max_fi_ply = puck_res['max_fi']
+                        crit_eval = eval_res
+                        crit_eval.governing_criterion = f"Puck ({puck_res['dominant_mode']})"
+                else:
+                    if eval_res.hashin_max_fi >= max_fi_ply:
+                        max_fi_ply = eval_res.hashin_max_fi
+                        crit_eval = eval_res
 
             if crit_eval is None:
                 crit_eval = self.failure_engine.evaluate_ply(0, 0, 0, ply.material, ply_idx, ply.angle)
@@ -160,10 +181,24 @@ class AnalysisService:
                 critical_mode = crit_eval.hashin_failure_mode
                 governing_criterion = crit_eval.governing_criterion
 
+        # 6. İleri Düzey Kopma Analizi (Progressive Damage Modeling - PDM)
+        pdm_results = None
+        if request_data.get('enable_pdm', False):
+            from ..core.progressive_solver import ProgressiveDamageSolver
+            pdm_solver = ProgressiveDamageSolver(laminate=laminate)
+            pdm_results = pdm_solver.run_pdm(
+                mesh=mesh_data,
+                nodal_forces=nodal_forces,
+                fixed_nodes=fixed_nodes,
+                total_applied_load=total_applied_load,
+                constraint_type=request_data.get('constraint_type', 'fixed'),
+                num_steps=20
+            )
+
         overall_status = "PASS" if min_mos >= 0.0 else "FAIL"
         t_end = time.perf_counter()
 
-        return {
+        res_dict = {
             'layup_notation': laminate.layup_notation,
             'total_thickness': float(laminate.total_thickness),
             'min_mos': float(min_mos) if min_mos != float('inf') else 999.0,
@@ -184,6 +219,12 @@ class AnalysisService:
             'elements': mesh_data.elements.tolist(),
             'nodal_stresses': fem_result.nodal_stresses.tolist()
         }
+
+        if pdm_results:
+            res_dict['pdm_results'] = pdm_results
+            res_dict['stress_frames'] = pdm_results.get('stress_frames')
+
+        return res_dict
 
     def _create_fallback_grid(self, width: float, height: float, mesh_size: float):
         """Gmsh yüklü değilse devreye giren basit izoparametrik Q4 ağ üreteci."""

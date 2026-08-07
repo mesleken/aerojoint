@@ -15,6 +15,12 @@ class HoleInput(BaseModel):
     diameter: float = 6.35
     load_magnitude: float = 5000.0
     load_angle: float = 0.0
+    torque: float = 0.0  # Cıvata Sıkma Torku (Nm)
+
+class LoadCase(BaseModel):
+    name: str = "Case 1"
+    load_magnitude: float = 5000.0
+    load_angle: float = 0.0
 
 class AnalysisRequest(BaseModel):
     width: float = 200.0
@@ -24,6 +30,9 @@ class AnalysisRequest(BaseModel):
     constraint_type: str = "fixed"
     mesh_size_global: float = 5.0
     mesh_size_hole: float = 1.0
+    enable_pdm: bool = False
+    failure_criterion: str = "Hashin"  # Hashin, Tsai-Wu, Puck
+    load_cases: Optional[List[LoadCase]] = None
 
 class PlyResultResponse(BaseModel):
     ply_id: int

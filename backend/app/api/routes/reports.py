@@ -15,26 +15,24 @@ router = APIRouter(prefix="/api/reports", tags=["Reports"])
 @router.post("/pdf")
 async def generate_pdf_report(request: AnalysisRequest):
     """Analiz parametrelerinden MIL-HDBK-17 PDF Sertifikasyon Raporu üretir."""
-    if not HAS_WEASYPRINT:
-        raise HTTPException(
-            status_code=501,
-            detail="WeasyPrint PDF motoru sunucuda yüklü değil. PDF raporu üretilemiyor."
-        )
-
     try:
         service = AnalysisService()
-        result = service.run_full_analysis(request.dict())
+        result = service.run_full_analysis(request.model_dump())
 
         generator = CertificationReportGenerator()
-        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+        suffix = ".pdf" if HAS_WEASYPRINT else ".html"
+        media_type = "application/pdf" if HAS_WEASYPRINT else "text/html"
+        filename = "AeroJoint_Certification_Report.pdf" if HAS_WEASYPRINT else "AeroJoint_Certification_Report.html"
+
+        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
         tmp_file.close()
 
-        pdf_path = generator.generate_pdf(result, tmp_file.name)
+        out_path = generator.generate_pdf(result, tmp_file.name)
 
         return FileResponse(
-            pdf_path,
-            media_type="application/pdf",
-            filename="AeroJoint_Certification_Report.pdf"
+            out_path,
+            media_type=media_type,
+            filename=filename
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"PDF rapor oluşturulamadı: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Rapor oluşturulamadı: {str(e)}")

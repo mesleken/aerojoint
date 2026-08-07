@@ -1,4 +1,4 @@
-import { AnalysisRequest, AnalysisResponse, MaterialOption } from '../types/analysis';
+import { AnalysisRequest, AnalysisResponse, MaterialOption, CustomMaterialPayload } from '../types/analysis';
 
 const API_BASE = 'http://localhost:8000/api';
 
@@ -19,6 +19,28 @@ export async function fetchMaterials(): Promise<MaterialOption[]> {
   }
 }
 
+export async function addCustomMaterial(mat: CustomMaterialPayload): Promise<void> {
+  const res = await fetch(`${API_BASE}/materials/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(mat)
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({ detail: 'Malzeme eklenemedi' }));
+    throw new Error(errData.detail || 'Malzeme eklenemedi');
+  }
+}
+
+export async function deleteCustomMaterial(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/materials/${encodeURIComponent(id)}`, {
+    method: 'DELETE'
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({ detail: 'Malzeme silinemedi' }));
+    throw new Error(errData.detail || 'Malzeme silinemedi');
+  }
+}
+
 export async function runAnalysis(req: AnalysisRequest): Promise<AnalysisResponse> {
   const res = await fetch(`${API_BASE}/analysis/run`, {
     method: 'POST',
@@ -32,4 +54,17 @@ export async function runAnalysis(req: AnalysisRequest): Promise<AnalysisRespons
   }
   
   return res.json();
+}
+
+export async function downloadPdfReport(req: AnalysisRequest): Promise<Blob> {
+  const res = await fetch(`${API_BASE}/reports/pdf`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req)
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({ detail: 'PDF oluşturulamadı' }));
+    throw new Error(errData.detail || 'PDF oluşturulamadı');
+  }
+  return res.blob();
 }

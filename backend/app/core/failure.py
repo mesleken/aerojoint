@@ -82,6 +82,54 @@ class FailureCriteriaEngine:
         }
     
     @staticmethod
+    def puck_criterion(sigma_1: float, sigma_2: float, tau_12: float,
+                       material: OrthotropicMaterial) -> dict:
+        """
+        Puck (2D) Kırılma Kriteri (Havacılık Gelişmiş Eki).
+        """
+        Xt, Xc = material.Xt, material.Xc
+        Yt, Yc = material.Yt, material.Yc
+        S12 = material.S12
+        
+        # Elyaf Kırılması (Fiber Failure - FF)
+        f_FF = (sigma_1 / Xt) if sigma_1 > 0 else (abs(sigma_1) / Xc)
+        
+        # Elyaf Arası/Matris Kırılması (Inter-Fiber Failure - IFF)
+        p_t = 0.35  # Eğim parametresi (parallely-transverse tension)
+        p_c = 0.30  # Eğim parametresi (parallely-transverse compression)
+        
+        f_IFF = 0.0
+        iff_mode = "None"
+        
+        if sigma_2 >= 0:
+            # Mode A (Enine Çekme + Makaslama)
+            term1 = (tau_12 / S12)**2
+            term2 = (1.0 - p_t * (Yt / S12))**2 * (sigma_2 / Yt)**2
+            f_IFF = np.sqrt(term1 + term2) + p_t * (sigma_2 / S12)
+            iff_mode = "Puck Mode A (Matrix Tension)"
+        else:
+            # Mode B / Mode C (Enine Basma + Makaslama)
+            R_A = S12 / (2.0 * p_c) if p_c > 0 else S12
+            if abs(sigma_2) <= R_A:
+                # Mode B
+                f_IFF = (1.0 / S12) * (np.sqrt(tau_12**2 + (p_c * sigma_2)**2) + p_c * sigma_2)
+                iff_mode = "Puck Mode B (Matrix Shear-Comp)"
+            else:
+                # Mode C
+                f_IFF = ((tau_12 / (2.0 * (1.0 + p_c) * S12))**2 + (sigma_2 / Yc)**2) * (Yc / abs(sigma_2))
+                iff_mode = "Puck Mode C (Matrix Compression)"
+        
+        max_fi = max(f_FF**2, f_IFF**2)
+        dominant = "Puck FF (Fiber)" if f_FF**2 >= f_IFF**2 else iff_mode
+        
+        return {
+            'fiber_fi': f_FF**2,
+            'iff_fi': f_IFF**2,
+            'max_fi': max_fi,
+            'dominant_mode': dominant
+        }
+    
+    @staticmethod
     def tsai_wu_criterion(sigma_1: float, sigma_2: float, tau_12: float,
                            material: OrthotropicMaterial) -> dict:
         """
@@ -113,13 +161,19 @@ class FailureCriteriaEngine:
         return {'fi': fi, 'strength_ratio': R}
     
     @staticmethod
-    def compute_margin_of_safety(failure_index: float) -> float:
+    def compute_margin_of_safety(failure_index: float, is_quadratic: bool = False) -> float:
         """
-        Güvenlik Marjı: MoS = (1/FI) - 1
+        Güvenlik Marjı: 
+        Doğrusal/R tabanlı FI için: MoS = (1/FI) - 1
+        Kuadratik FI için (Hashin): MoS = (1/sqrt(FI)) - 1
         """
         if failure_index <= 0:
             return float('inf')
-        return (1.0 / failure_index) - 1.0
+        
+        if is_quadratic:
+            return (1.0 / np.sqrt(failure_index)) - 1.0
+        else:
+            return (1.0 / failure_index) - 1.0
     
     def evaluate_ply(self, sigma_1: float, sigma_2: float, tau_12: float,
                      material: OrthotropicMaterial, ply_id: int, 
@@ -128,8 +182,11 @@ class FailureCriteriaEngine:
         hashin = self.hashin_criteria(sigma_1, sigma_2, tau_12, material)
         tsai_wu = self.tsai_wu_criterion(sigma_1, sigma_2, tau_12, material)
         
-        mos_h = self.compute_margin_of_safety(hashin['max_fi'])
-        mos_tw = self.compute_margin_of_safety(tsai_wu['fi'])
+        # Hashin hasar indeksleri kuadratiktir (stress karesiyle orantılıdır), 
+        # bu nedenle mukavemet oranı (Strength Ratio, R) = 1 / sqrt(FI)
+        mos_h = self.compute_margin_of_safety(hashin['max_fi'], is_quadratic=True)
+        # Tsai-Wu fi değeri halihazırda (1/R) olarak hesaplandığı için doğrusaldır
+        mos_tw = self.compute_margin_of_safety(tsai_wu['fi'], is_quadratic=False)
         
         min_mos = mos_h
         governing = "Hashin"

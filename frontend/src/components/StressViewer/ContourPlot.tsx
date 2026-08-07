@@ -6,6 +6,7 @@ interface Props {
   nodes: number[][];
   elements: number[][];
   stresses?: number[][]; // [N_nodes, 3] (sigma_x, sigma_y, tau_xy)
+  stressFrames?: number[][][]; // Multi-step PDM frames
   width: number;
   height: number;
   selectedComponent?: 'sigma_x' | 'sigma_y' | 'tau_xy' | 'von_mises';
@@ -29,30 +30,40 @@ export const ContourPlot: React.FC<Props> = ({
   nodes,
   elements,
   stresses,
+  stressFrames,
   width,
   height,
   selectedComponent = 'von_mises',
   holes = []
 }) => {
   const [viewMode, setViewMode] = useState<'fit' | 'critical'>('critical');
+  const [showMesh, setShowMesh] = useState<boolean>(true);
+  const [activeFrameIndex, setActiveFrameIndex] = useState<number>(0);
+
+  const activeStresses = useMemo(() => {
+    if (stressFrames && stressFrames.length > 0 && stressFrames[activeFrameIndex]) {
+      return stressFrames[activeFrameIndex];
+    }
+    return stresses;
+  }, [stresses, stressFrames, activeFrameIndex]);
 
   const intensity = useMemo(() => {
-    if (!stresses || stresses.length === 0) {
+    if (!activeStresses || activeStresses.length === 0) {
       return new Array(nodes.length).fill(0);
     }
 
-    return stresses.map(s => {
+    return activeStresses.map(s => {
       const [sx, sy, txy] = s;
       if (selectedComponent === 'sigma_x') return sx;
       if (selectedComponent === 'sigma_y') return sy;
       if (selectedComponent === 'tau_xy') return txy;
       return Math.sqrt(Math.max(0, sx * sx - sx * sy + sy * sy + 3 * txy * txy));
     });
-  }, [stresses, nodes.length, selectedComponent]);
+  }, [activeStresses, nodes.length, selectedComponent]);
 
   // En yüksek gerilmeye sahip kritik düğümü bul (Stress Concentration Peak)
   const criticalPoint = useMemo(() => {
-    if (!stresses || stresses.length === 0 || nodes.length === 0) {
+    if (!activeStresses || activeStresses.length === 0 || nodes.length === 0) {
       return { x: width / 2, y: height / 2, stress: 0 };
     }
     let maxVal = -1;
@@ -68,7 +79,7 @@ export const ContourPlot: React.FC<Props> = ({
       y: nodes[maxIdx][1],
       stress: maxVal
     };
-  }, [stresses, intensity, nodes, width, height]);
+  }, [activeStresses, intensity, nodes, width, height]);
 
   useEffect(() => {
     if (stresses && stresses.length > 0) {
@@ -99,6 +110,39 @@ export const ContourPlot: React.FC<Props> = ({
     return { i: iArr, j: jArr, k: kArr };
   }, [elements]);
 
+  // FEM Mesh Wireframe Edge Traces (Canlı FEM Mesh Görüntüleyici)
+  const meshWireframeTrace = useMemo(() => {
+    if (!showMesh || !elements || elements.length === 0) return null;
+
+    const edgeX: (number | null)[] = [];
+    const edgeY: (number | null)[] = [];
+    const edgeZ: (number | null)[] = [];
+
+    elements.forEach(elem => {
+      const len = elem.length;
+      for (let idx = 0; idx < len; idx++) {
+        const n1 = nodes[elem[idx]];
+        const n2 = nodes[elem[(idx + 1) % len]];
+        if (n1 && n2) {
+          edgeX.push(n1[0], n2[0], null);
+          edgeY.push(n1[1], n2[1], null);
+          edgeZ.push(0.01, 0.01, null);
+        }
+      }
+    });
+
+    return {
+      type: 'scatter3d',
+      mode: 'lines',
+      x: edgeX,
+      y: edgeY,
+      z: edgeZ,
+      line: { color: 'rgba(255, 255, 255, 0.25)', width: 1 },
+      hoverinfo: 'none',
+      showlegend: false
+    };
+  }, [showMesh, elements, nodes]);
+
   // Plaka Dış Sınır Çizgisi (Cyan Boundary Wireframe)
   const plateBoundaryTrace = useMemo(() => {
     return {
@@ -113,22 +157,19 @@ export const ContourPlot: React.FC<Props> = ({
     };
   }, [width, height]);
 
-  // Plaka Boyutuna Göre Dinamik Adaptif Kadraj Çarpanı (Adaptive Scale Factor Formulation)
-  // W, H arttıkça kadraj otomatik olarak 0.38x -> 0.25x -> 0.20x oranında konforlu esner
+  // Plaka Boyutuna Göre Dinamik Adaptif Kadraj Çarpanı
   const adaptiveScaleFactor = useMemo(() => {
     const maxDim = Math.max(width, height);
     if (maxDim <= 200) return 0.38;
     if (maxDim >= 1000) return 0.20;
-    // 200 mm ile 1000 mm arasında düzgün lineer adaptasyon (örn: 750mm -> 0.25x, 200mm -> 0.38x)
     return 0.38 - (maxDim - 200) * (0.18 / 800);
   }, [width, height]);
 
-  // Dinamik 2D SVG Annotations (Her Zaman %100 Vektörel Netlikte ve Eşit Boyutlu Fontlar)
+  // Dinamik 2D SVG Annotations
   const edgeAnnotations = useMemo(() => {
     const annotList: any[] = [];
     const fontConfig = { family: 'Inter, system-ui, sans-serif', size: 12, color: '#38bdf8' };
 
-    // X Ekseni Kenar Sayıları (Plaka Alt Kenarına Yapışık)
     const stepX = getNiceStep(width, 5);
     for (let val = 0; val <= width + 0.1; val += stepX) {
       const roundedVal = Math.round(val);
@@ -143,7 +184,6 @@ export const ContourPlot: React.FC<Props> = ({
       });
     }
 
-    // Y Ekseni Kenar Sayıları (Plaka Sol Kenarına Yapışık)
     const stepY = getNiceStep(height, 5);
     for (let val = 0; val <= height + 0.1; val += stepY) {
       const roundedVal = Math.round(val);
@@ -161,12 +201,10 @@ export const ContourPlot: React.FC<Props> = ({
     return annotList;
   }, [width, height]);
 
-  // Dinamik Izgara Çizgisi Sayıları
   const minDim = Math.max(1, Math.min(width, height));
   const nticksX = useMemo(() => Math.min(60, Math.max(20, Math.round(30 * (width / minDim)))), [width, height, minDim]);
   const nticksY = useMemo(() => Math.min(60, Math.max(20, Math.round(30 * (height / minDim)))), [width, height, minDim]);
 
-  // En Yüksek Gerilmeli Deliğin Merkezini ve Çapını Bul
   const criticalHoleTarget = useMemo(() => {
     if (!holes || holes.length === 0) {
       return { x: criticalPoint.x, y: criticalPoint.y, diameter: 10.0 };
@@ -183,10 +221,8 @@ export const ContourPlot: React.FC<Props> = ({
     return target;
   }, [holes, criticalPoint]);
 
-  // Adaptif Kadraj Formülasyonlu Eksen & Kamera Yapılandırması
   const { xRange, yRange, cameraConfig } = useMemo(() => {
-    if (viewMode === 'critical' && stresses && stresses.length > 0) {
-      // Delik Çapına (D) Orantılı Tam Delik Merkezi Odaklama (D x 2.8 Radyal Çap)
+    if (viewMode === 'critical' && activeStresses && activeStresses.length > 0) {
       const zoomSpan = Math.max(criticalHoleTarget.diameter * 2.8, 18.0);
       return {
         xRange: [criticalHoleTarget.x - zoomSpan, criticalHoleTarget.x + zoomSpan],
@@ -198,7 +234,6 @@ export const ContourPlot: React.FC<Props> = ({
       };
     }
 
-    // Tüm Plakayı Sığdır (Plaka Boyutuna Göre Dinamik Adaptif Kadraj)
     const fitSpanX = (width / adaptiveScaleFactor) / 2.0;
     const fitSpanY = (height / adaptiveScaleFactor) / 2.0;
     return {
@@ -209,9 +244,8 @@ export const ContourPlot: React.FC<Props> = ({
         eye: { x: 0, y: 0, z: 1.8 }
       }
     };
-  }, [viewMode, criticalPoint, criticalHoleTarget, width, height, stresses, adaptiveScaleFactor]);
+  }, [viewMode, criticalPoint, criticalHoleTarget, width, height, activeStresses, adaptiveScaleFactor]);
 
-  // Hover/Click Pop-up Etiketleri
   const hoverTextList = useMemo(() => {
     return nodes.map((n, idx) => {
       const val = intensity[idx] || 0;
@@ -219,7 +253,37 @@ export const ContourPlot: React.FC<Props> = ({
     });
   }, [nodes, intensity]);
 
-  const uiRevisionKey = `${viewMode}_${width}_${height}_${criticalPoint.x.toFixed(1)}_${criticalPoint.y.toFixed(1)}_${selectedComponent}`;
+  const dataTraces: any[] = [
+    {
+      type: 'mesh3d',
+      x,
+      y,
+      z: new Array(x.length).fill(0),
+      i,
+      j,
+      k,
+      intensity,
+      colorscale: 'Jet',
+      colorbar: {
+        title: { text: selectedComponent.toUpperCase() + ' (MPa)', font: { color: '#38bdf8', size: 12 }, side: 'top' },
+        tickfont: { color: '#94a3b8', size: 11 },
+        len: 0.85,
+        x: 1.05,
+        thickness: 16
+      },
+      flatshading: true,
+      showscale: true,
+      hoverinfo: 'text',
+      text: hoverTextList
+    },
+    plateBoundaryTrace
+  ];
+
+  if (meshWireframeTrace) {
+    dataTraces.push(meshWireframeTrace);
+  }
+
+  const uiRevisionKey = `${viewMode}_${width}_${height}_${criticalPoint.x.toFixed(1)}_${criticalPoint.y.toFixed(1)}_${selectedComponent}_${showMesh}_${activeFrameIndex}_${holes.map(h => `${h.diameter}_${h.x}_${h.y}`).join(',')}`;
 
   return (
     <div className="glass-panel" style={{ padding: '14px', flex: 1, display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -227,7 +291,7 @@ export const ContourPlot: React.FC<Props> = ({
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
           <span>📏 Plaka Boyutu: <b>{width} × {height} mm</b></span>
-          {stresses && stresses.length > 0 && (
+          {activeStresses && activeStresses.length > 0 && (
             <span style={{ color: 'var(--accent-amber)', background: 'rgba(245, 158, 11, 0.15)', padding: '2px 8px', borderRadius: '4px', border: '1px solid rgba(245, 158, 11, 0.3)' }}>
               <Crosshair size={12} style={{ display: 'inline', marginRight: '4px' }} />
               Max Gerilme Odağı: X = {criticalPoint.x.toFixed(1)} mm | Y = {criticalPoint.y.toFixed(1)} mm ({criticalPoint.stress.toFixed(1)} MPa)
@@ -235,7 +299,17 @@ export const ContourPlot: React.FC<Props> = ({
           )}
         </div>
 
-        <div style={{ display: 'flex', gap: '6px' }}>
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+          {/* FEM Mesh Wireframe Toggle */}
+          <button
+            className={`btn ${showMesh ? 'btn-primary' : 'btn-secondary'}`}
+            style={{ padding: '3px 8px', fontSize: '0.75rem' }}
+            onClick={() => setShowMesh(!showMesh)}
+            title="FEM Eleman Ağını Göster/Gizle"
+          >
+            {showMesh ? '🕸️ Mesh Açık' : '🕸️ Mesh Kapalı'}
+          </button>
+
           <button
             className={`btn ${viewMode === 'fit' ? 'btn-primary' : 'btn-secondary'}`}
             style={{ padding: '3px 8px', fontSize: '0.75rem' }}
@@ -253,33 +327,25 @@ export const ContourPlot: React.FC<Props> = ({
         </div>
       </div>
 
+      {/* Stress Animation Slider for PDM frames */}
+      {stressFrames && stressFrames.length > 1 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#1e293b', padding: '6px 12px', borderRadius: '6px', fontSize: '0.8rem' }}>
+          <span style={{ color: '#38bdf8', fontWeight: 600 }}>🎬 Yükleme Adımı Animasyonu:</span>
+          <input
+            type="range"
+            min={0}
+            max={stressFrames.length - 1}
+            value={activeFrameIndex}
+            onChange={(e) => setActiveFrameIndex(parseInt(e.target.value))}
+            style={{ flex: 1, cursor: 'pointer' }}
+          />
+          <span>Adım {activeFrameIndex + 1} / {stressFrames.length} (%{Math.round(((activeFrameIndex + 1) / stressFrames.length) * 100)} Yük)</span>
+        </div>
+      )}
+
       {/* Plotly Dinamik Adaptif Kadrajlı Görselleştirici */}
       <Plot
-        data={[
-          {
-            type: 'mesh3d',
-            x,
-            y,
-            z: new Array(x.length).fill(0),
-            i,
-            j,
-            k,
-            intensity,
-            colorscale: 'Jet',
-            colorbar: {
-              title: { text: selectedComponent.toUpperCase() + ' (MPa)', font: { color: '#38bdf8', size: 12 }, side: 'top' },
-              tickfont: { color: '#94a3b8', size: 11 },
-              len: 0.85,
-              x: 1.05,
-              thickness: 16
-            },
-            flatshading: true,
-            showscale: true,
-            hoverinfo: 'text',
-            text: hoverTextList
-          },
-          plateBoundaryTrace
-        ]}
+        data={dataTraces}
         layout={{
           uirevision: uiRevisionKey,
           autosize: true,
