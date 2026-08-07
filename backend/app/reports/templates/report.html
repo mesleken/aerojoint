@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <title>AeroJoint Sertifikasyon Raporu — {{ report_id }}</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- SAYFA 1: KAPAK VE MÜHENDİSLİK ÖZETİ -->
+<div class="page">
+    <div class="header">
+        <div>
+            <div class="logo-text">🛩️ AeroJoint</div>
+            <div class="subtitle">Havacılık & Savunma Kompozit Bağlantı Sertifikasyon Raporu</div>
+        </div>
+        <div style="text-align: right; font-size: 10px; color: #64748b;">
+            <b>MIL-HDBK-17 / CMH-17</b><br>
+            Rapor No: {{ report_id }}
+        </div>
+    </div>
+
+    <h2 style="color: #1e3a8a; font-size: 16px; margin-bottom: 12px;">1. Analiz Genel Bilgileri</h2>
+    <table class="meta-table">
+        <tr><td class="label">Rapor Kimliği</td><td>{{ report_id }}</td></tr>
+        <tr><td class="label">Analiz Tarihi</td><td>{{ date }}</td></tr>
+        <tr><td class="label">Katman Notasyonu (Layup)</td><td><code>{{ layup_notation }}</code></td></tr>
+        <tr><td class="label">Toplam Plaka Kalınlığı</td><td>{{ total_thickness }} mm</td></tr>
+        <tr><td class="label">Uygulanan Yataklama Yükü (P)</td><td>{{ applied_load }} N</td></tr>
+        <tr><td class="label">Sınır Koşulu</td><td>Sol Kenar Ankastre (Fixed)</td></tr>
+    </table>
+
+    <div class="result-box {{ 'pass' if overall_status == 'PASS' else 'fail' }}">
+        <div style="font-size: 12px; font-weight: 600; text-transform: uppercase;">MİNİMUM GÜVENLİK MARJI (MoS)</div>
+        <div class="mos-value">MoS = {{ "%.3f"|format(min_mos) }}</div>
+        <div class="status-badge">{{ overall_status }} {{ '✅ (GEÇTİ)' if overall_status == 'PASS' else '❌ (KALDI)' }}</div>
+        <div style="margin-top: 10px; font-size: 11px;">
+            <b>Birincil Kriter:</b> Hashin (1980) 4-Modlu Kırılma Denetimi<br>
+            <b>Kritik Mod:</b> {{ critical_mode }} | <b>Kritik Katman:</b> #{{ critical_ply + 1 }} ({{ critical_angle }}°)
+        </div>
+    </div>
+</div>
+
+<!-- SAYFA 2: KATMAN BAZLI HASAR VE MARJ ANALİZİ -->
+<div class="page">
+    <h2 style="color: #1e3a8a; font-size: 16px; margin-bottom: 12px;">2. Katman Bazlı Hashin & Tsai-Wu Hasar Tablosu</h2>
+    <p style="font-size: 10px; color: #64748b; margin-bottom: 12px;">
+        FAA ve EASA standartlarına uygun olarak <b>Hashin 1980</b> (Elyaf Çekme/Basma, Matris Çekme/Basma) birincil kırılma kriteri kabul edilmiştir.
+    </p>
+
+    <table class="failure-table">
+        <thead>
+            <tr>
+                <th>Katman #</th>
+                <th>Açı (°)</th>
+                <th>Hashin Max FI</th>
+                <th>Baskın Hasar Modu</th>
+                <th>Tsai-Wu FI</th>
+                <th>MoS (Hashin)</th>
+                <th>Durum</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for ply in ply_results %}
+            <tr class="{{ 'critical' if ply.ply_id == critical_ply else '' }}">
+                <td>#{{ ply.ply_id + 1 }}</td>
+                <td>{{ ply.angle }}°</td>
+                <td>{{ "%.4f"|format(ply.hashin_max_fi) }}</td>
+                <td>{{ ply.dominant_mode }}</td>
+                <td>{{ "%.4f"|format(ply.tsai_wu_fi) }}</td>
+                <td>{{ "%.3f"|format(ply.mos_hashin) }}</td>
+                <td><b>{{ 'PASS' if not ply.is_failed else 'FAIL' }}</b></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- SAYFA 3: LAMİNAT RİJİTLİK MATRİSLERİ VE ONAY -->
+<div class="page">
+    <h2 style="color: #1e3a8a; font-size: 16px; margin-bottom: 12px;">3. Klasik Laminat Teorisi (CLT) Matrisleri</h2>
+
+    <h3 style="font-size: 12px; color: #334155;">[A] Düzlem-İçi Uzar-Büzülür Rijitlik Matrisi (N/mm)</h3>
+    <table class="matrix-table">
+        {% for row in A_matrix %}
+        <tr>{% for val in row %}<td>{{ "%.1f"|format(val) }}</td>{% endfor %}</tr>
+        {% endfor %}
+    </table>
+
+    <h3 style="font-size: 12px; color: #334155;">[D] Eğilme Rijitlik Matrisi (N·mm)</h3>
+    <table class="matrix-table">
+        {% for row in D_matrix %}
+        <tr>{% for val in row %}<td>{{ "%.1f"|format(val) }}</td>{% endfor %}</tr>
+        {% endfor %}
+    </table>
+
+    <div style="background: #f8fafc; border-left: 4px solid #1e3a8a; padding: 12px; margin-top: 20px; font-size: 10px;">
+        <b>Standartlar Uyum Beyanı:</b><br>
+        Bu analiz MIL-HDBK-17-3F / CMH-17-3G Cilt 3 kurallarına göre Kosinüs Dağılımlı yataklama basıncı ($p_0 \cos\theta$) ve Ortotropik 2D Düzlem Gerilme FEM formülasyonu kullanılarak gerçekleştirilmiştir.
+    </div>
+
+    <div class="signature-block">
+        <div class="sig-col">
+            <div><b>Analizi Yapan Mühendis</b></div>
+            <div class="sig-line"></div>
+            <div style="font-size: 10px; color: #64748b;">İmza & Tarih</div>
+        </div>
+        <div class="sig-col">
+            <div><b>Sertifikasyon Onaylayıcısı</b></div>
+            <div class="sig-line"></div>
+            <div style="font-size: 10px; color: #64748b;">İmza & Tarih</div>
+        </div>
+    </div>
+
+    <div class="footer">
+        AeroJoint v1.0 Sertifikasyon Yazılımı Tarafından Üretilmiştir.
+    </div>
+</div>
+
+</body>
+</html>

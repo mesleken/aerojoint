@@ -1,0 +1,94 @@
+{
+  "version": "1.0",
+  "description": "AeroJoint Havacılık Kompozit Malzeme Kütüphanesi",
+  "materials": {
+    "T300_5208": {
+      "name": "T300/5208 Carbon/Epoxy",
+      "category": "Carbon/Epoxy",
+      "source": "MIL-HDBK-17-2F, Table 2.4.1",
+      "elastic": {
+        "E1": 181000,
+        "E2": 10300,
+        "G12": 7170,
+        "nu12": 0.28
+      },
+      "strength": {
+        "Xt": 1500,
+        "Xc": 1500,
+        "Yt": 40,
+        "Yc": 246,
+        "S12": 68,
+        "S23": null
+      },
+      "ply_thickness": 0.125,
+      "density": 1.6,
+      "notes": "Standart havacılık test malzemesi"
+    },
+    "AS4_3501_6": {
+      "name": "AS4/3501-6 Carbon/Epoxy",
+      "category": "Carbon/Epoxy",
+      "source": "CMH-17-2G, Table 2.3.1",
+      "elastic": {
+        "E1": 147000,
+        "E2": 10300,
+        "G12": 7000,
+        "nu12": 0.27
+      },
+      "strength": {
+        "Xt": 2280,
+        "Xc": 1440,
+        "Yt": 57,
+        "Yc": 228,
+        "S12": 71,
+        "S23": null
+      },
+      "ply_thickness": 0.188,
+      "density": 1.58,
+      "notes": "Yaygın havacılık yapısal prepreg"
+    },
+    "IM7_8552": {
+      "name": "IM7/8552 Carbon/Epoxy",
+      "category": "Carbon/Epoxy",
+      "source": "CMH-17-2G, Table 2.3.2",
+      "elastic": {
+        "E1": 171420,
+        "E2": 9080,
+        "G12": 5290,
+        "nu12": 0.32
+      },
+      "strength": {
+        "Xt": 2326,
+        "Xc": 1200,
+        "Yt": 62.3,
+        "Yc": 199.8,
+        "S12": 92.3,
+        "S23": null
+      },
+      "ply_thickness": 0.131,
+      "density": 1.57,
+      "notes": "Yüksek performanslı ara modüllü elyaf sistemi"
+    },
+    "E_GLASS_EPOXY": {
+      "name": "E-Glass/Epoxy",
+      "category": "Glass/Epoxy",
+      "source": "Daniel & Ishai Tablo 2.1",
+      "elastic": {
+        "E1": 39000,
+        "E2": 8600,
+        "G12": 3800,
+        "nu12": 0.28
+      },
+      "strength": {
+        "Xt": 1080,
+        "Xc": 620,
+        "Yt": 39,
+        "Yc": 128,
+        "S12": 89,
+        "S23": null
+      },
+      "ply_thickness": 0.25,
+      "density": 2.1,
+      "notes": "Cam elyaf standart test malzemesi"
+    }
+  }
+}
