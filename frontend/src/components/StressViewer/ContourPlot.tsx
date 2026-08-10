@@ -37,7 +37,7 @@ export const ContourPlot: React.FC<Props> = ({
   holes = []
 }) => {
   const [viewMode, setViewMode] = useState<'fit' | 'critical'>('critical');
-  const [showMesh, setShowMesh] = useState<boolean>(true);
+  const [showMesh, setShowMesh] = useState<boolean>(false);
   const [activeFrameIndex, setActiveFrameIndex] = useState<number>(0);
 
   const activeStresses = useMemo(() => {
@@ -221,8 +221,10 @@ export const ContourPlot: React.FC<Props> = ({
     return target;
   }, [holes, criticalPoint]);
 
+   // Adaptif Kadraj Formülasyonlu Eksen & Kamera Yapılandırması
   const { xRange, yRange, cameraConfig } = useMemo(() => {
     if (viewMode === 'critical' && activeStresses && activeStresses.length > 0) {
+      // Delik Çapına (D) Orantılı Tam Delik Merkezi Odaklama (D x 2.8 Radyal Çap)
       const zoomSpan = Math.max(criticalHoleTarget.diameter * 2.8, 18.0);
       return {
         xRange: [criticalHoleTarget.x - zoomSpan, criticalHoleTarget.x + zoomSpan],
@@ -234,6 +236,7 @@ export const ContourPlot: React.FC<Props> = ({
       };
     }
 
+    // Tüm Plakayı Sığdır (Plaka Boyutuna Göre Dinamik Adaptif Kadraj)
     const fitSpanX = (width / adaptiveScaleFactor) / 2.0;
     const fitSpanY = (height / adaptiveScaleFactor) / 2.0;
     return {
@@ -241,7 +244,7 @@ export const ContourPlot: React.FC<Props> = ({
       yRange: [height / 2.0 - fitSpanY, height / 2.0 + fitSpanY],
       cameraConfig: {
         center: { x: 0, y: 0, z: 0 },
-        eye: { x: 0, y: 0, z: 1.8 }
+        eye: { x: 0, y: 0, z: 1.8 } // Fit plate (uzak kamera)
       }
     };
   }, [viewMode, criticalPoint, criticalHoleTarget, width, height, activeStresses, adaptiveScaleFactor]);
@@ -283,7 +286,7 @@ export const ContourPlot: React.FC<Props> = ({
     dataTraces.push(meshWireframeTrace);
   }
 
-  const uiRevisionKey = `${viewMode}_${width}_${height}_${criticalPoint.x.toFixed(1)}_${criticalPoint.y.toFixed(1)}_${selectedComponent}_${showMesh}_${activeFrameIndex}_${holes.map(h => `${h.diameter}_${h.x}_${h.y}`).join(',')}`;
+  const uiRevisionKey = `${viewMode}_${width}_${height}_${criticalPoint.x.toFixed(1)}_${criticalPoint.y.toFixed(1)}_${selectedComponent}_${holes.map(h => `${h.diameter}_${h.x}_${h.y}`).join(',')}`;
 
   return (
     <div className="glass-panel" style={{ padding: '14px', flex: 1, display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -315,14 +318,14 @@ export const ContourPlot: React.FC<Props> = ({
             style={{ padding: '3px 8px', fontSize: '0.75rem' }}
             onClick={() => setViewMode('fit')}
           >
-            <Maximize2 size={13} /> Tüm Plakayı Sığdır ({adaptiveScaleFactor.toFixed(2)}x)
+            <Maximize2 size={13} /> Tüm Plakayı Sığdır
           </button>
           <button
             className={`btn ${viewMode === 'critical' ? 'btn-primary' : 'btn-secondary'}`}
             style={{ padding: '3px 8px', fontSize: '0.75rem' }}
             onClick={() => setViewMode('critical')}
           >
-            <Target size={13} /> Kritik Bölge Zoom (1.0x)
+            <Target size={13} /> Kritik Bölge Zoom
           </button>
         </div>
       </div>

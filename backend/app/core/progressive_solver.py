@@ -168,8 +168,8 @@ class ProgressiveDamageSolver:
                         
                         s1, s2, t12 = sl[0], sl[1], sl[2]
 
-                        # Hashin Hasar Kriteri
-                        hashin = self.failure_engine.hashin_criteria(s1, s2, t12, ply.material)
+                        # Hashin Hasar Kriteri (thermal stres 0 olarak geçilir)
+                        hashin = self.failure_engine.hashin_criteria([s1, s2, t12], [0.0, 0.0, 0.0], ply.material)
 
                         if (hashin['matrix_tension'] >= 1.0 or hashin['matrix_compression'] >= 1.0) and not damage_state[elem_idx, ply_idx, 0]:
                             damage_state[elem_idx, ply_idx, 0] = True

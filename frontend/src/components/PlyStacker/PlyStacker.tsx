@@ -74,7 +74,7 @@ export const PlyStacker: React.FC<Props> = ({ plies, materials, onChange }) => {
         {plies.map((ply, idx) => (
           <div key={idx} style={{
             display: 'grid',
-            gridTemplateColumns: '40px 2fr 1.3fr 1.3fr 40px',
+            gridTemplateColumns: '40px minmax(0, 2fr) minmax(0, 1.3fr) minmax(0, 1.3fr) 40px',
             gap: '10px',
             alignItems: 'center',
             background: 'var(--bg-input)',
@@ -86,7 +86,7 @@ export const PlyStacker: React.FC<Props> = ({ plies, materials, onChange }) => {
             
             <select
               className="form-select"
-              style={{ padding: '6px 8px', fontSize: '0.85rem' }}
+              style={{ padding: '6px 8px', fontSize: '0.85rem', width: '100%', minWidth: 0, textOverflow: 'ellipsis' }}
               value={ply.material_id}
               onChange={(e) => updatePly(idx, 'material_id', e.target.value)}
               title="Kompozit prepreg malzeme seçimi"

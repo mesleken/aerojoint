@@ -156,6 +156,9 @@ class FEMSolver:
         return nodal_sum / nodal_count[:, np.newaxis]
     
     def _compute_ply_stresses(self, nodal_stresses):
+        # Gerçek CLT Kinematiği: Global birleşik gerilmelerden -> Global gerinim (Strain) -> Katman bazlı gerilme (Stress)
+        C_eff_inv = np.linalg.inv(self.C_eff)
+        
         ply_results = []
         for ply_idx, ply in enumerate(self.laminate.plies):
             theta_rad = np.radians(ply.angle)
@@ -165,10 +168,20 @@ class FEMSolver:
                 [ n**2,  m**2,  -2*m*n],
                 [-m*n,   m*n,    m**2 - n**2]
             ])
-            ply_nodal = np.array([T @ sg for sg in nodal_stresses])
+            
+            Qbar = self.Qbar_per_ply[ply_idx]
+            
+            # Katmanın gerçek global gerilmesi: sigma_global_k = Qbar * epsilon_global
+            # epsilon_global = C_eff_inv * sigma_avg
+            # Dolayısıyla: sigma_global_k = (Qbar * C_eff_inv) * sigma_avg
+            M_trans = Qbar @ C_eff_inv
+            
+            ply_nodal_global = np.array([M_trans @ sg for sg in nodal_stresses])
+            ply_nodal_local = np.array([T @ sg for sg in ply_nodal_global])
+            
             ply_results.append({
                 'ply_id': ply_idx, 'angle': ply.angle,
-                'nodal_stresses_local': ply_nodal,
-                'nodal_stresses_global': nodal_stresses.copy()
+                'nodal_stresses_local': ply_nodal_local,
+                'nodal_stresses_global': ply_nodal_global
             })
         return ply_results

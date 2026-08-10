@@ -132,6 +132,26 @@ class AnalysisService:
 
         # 5. Katman Bazlı Kırılma ve MoS Değerlendirmesi
         selected_criterion = request_data.get('failure_criterion', 'Hashin')
+        # Whitney-Nuismer Point Stress Criterion: Karakteristik Mesafe
+        d0 = float(request_data.get('characteristic_distance', 0.0))
+        
+        # Ön hesaplama: Hangi düğümler karakteristik mesafe d0 dışında?
+        valid_nodes = np.ones(len(mesh_data.nodes), dtype=bool)
+        if d0 > 0.0:
+            for i, (nx, ny) in enumerate(mesh_data.nodes):
+                for hole_in in holes_in:
+                    hx = float(hole_in.get('x', 0))
+                    hy = float(hole_in.get('y', 0))
+                    r = float(hole_in.get('diameter', 6.35)) / 2.0
+                    dist = np.sqrt((nx - hx)**2 + (ny - hy)**2) - r
+                    # Düğüm delik kenarına d0'dan daha yakınsa değerlendirmeden çıkar
+                    if dist > -1e-5 and dist < (d0 - 1e-5):
+                        valid_nodes[i] = False
+                        
+        # Termal kalıntı gerilmeleri bir kere önceden hesapla (Sadece sıcaklık farkı, mekanik yük 0)
+        clt_engine = CLTEngine()
+        thermal_ply_results = clt_engine.compute_ply_stresses(laminate, np.zeros(3), np.zeros(3), delta_T=float(request_data.get('delta_T', 0.0)))
+        
         ply_results = []
         min_mos = float('inf')
         critical_ply_id = 0
@@ -142,44 +162,49 @@ class AnalysisService:
         for ply_idx, ply in enumerate(laminate.plies):
             ply_stresses_local = fem_result.ply_stresses[ply_idx]['nodal_stresses_local']
             
+            # Bu katmandaki termal stres (lokal eksenlerde, orta düzlemde) - nodal koordinatlardan bağımsız sabittir
+            sigma_therm = thermal_ply_results[ply_idx]['positions']['middle']['sigma_local']
+            
             # En kritik düğümü bul
             max_fi_ply = 0.0
             crit_eval = None
 
-            for stress_vec in ply_stresses_local:
-                s1, s2, t12 = stress_vec[0], stress_vec[1], stress_vec[2]
-                eval_res = self.failure_engine.evaluate_ply(s1, s2, t12, ply.material, ply_idx, ply.angle)
+            for n_idx, stress_vec in enumerate(ply_stresses_local):
+                if not valid_nodes[n_idx]:
+                    continue
+                    
+                sigma_mech = [stress_vec[0], stress_vec[1], stress_vec[2]]
+                eval_res = self.failure_engine.evaluate_ply(sigma_mech, sigma_therm, ply.material, ply_idx, ply.angle)
                 
-                if selected_criterion == 'Puck':
-                    puck_res = self.failure_engine.puck_criterion(s1, s2, t12, ply.material)
-                    if puck_res['max_fi'] >= max_fi_ply:
-                        max_fi_ply = puck_res['max_fi']
-                        crit_eval = eval_res
-                        crit_eval.governing_criterion = f"Puck ({puck_res['dominant_mode']})"
-                else:
-                    if eval_res.hashin_max_fi >= max_fi_ply:
-                        max_fi_ply = eval_res.hashin_max_fi
-                        crit_eval = eval_res
+                # Seçilen kritere göre o düğümdeki FI değerini al
+                current_fi = eval_res.hashin_max_fi if selected_criterion == 'Hashin' else eval_res.tsai_wu_fi
+                
+                if current_fi >= max_fi_ply:
+                    max_fi_ply = current_fi
+                    crit_eval = eval_res
 
             if crit_eval is None:
-                crit_eval = self.failure_engine.evaluate_ply(0, 0, 0, ply.material, ply_idx, ply.angle)
+                crit_eval = self.failure_engine.evaluate_ply([0,0,0], sigma_therm, ply.material, ply_idx, ply.angle)
+
+            # İlgili katmanın raporunu oluştururken de seçilen kriteri baz al
+            selected_mos = crit_eval.mos_hashin if selected_criterion == 'Hashin' else crit_eval.mos_tsai_wu
 
             ply_results.append({
                 'ply_id': ply_idx,
                 'angle': ply.angle,
                 'hashin_max_fi': float(crit_eval.hashin_max_fi),
-                'dominant_mode': crit_eval.hashin_failure_mode,
+                'dominant_mode': crit_eval.hashin_failure_mode if selected_criterion == 'Hashin' else "Tsai-Wu Interacted",
                 'tsai_wu_fi': float(crit_eval.tsai_wu_fi),
-                'mos_hashin': float(crit_eval.mos_hashin),
-                'is_failed': bool(crit_eval.is_failed)
+                'mos_hashin': float(selected_mos), # Arayüz 'mos_hashin' değişkenini okuyor olabilir, içine seçileni koyalım
+                'is_failed': bool(selected_mos < 0.0)
             })
 
-            if crit_eval.mos_hashin < min_mos:
-                min_mos = crit_eval.mos_hashin
+            if selected_mos < min_mos:
+                min_mos = selected_mos
                 critical_ply_id = ply_idx
                 critical_angle = ply.angle
-                critical_mode = crit_eval.hashin_failure_mode
-                governing_criterion = crit_eval.governing_criterion
+                critical_mode = crit_eval.hashin_failure_mode if selected_criterion == 'Hashin' else "Tsai-Wu"
+                governing_criterion = selected_criterion
 
         # 6. İleri Düzey Kopma Analizi (Progressive Damage Modeling - PDM)
         pdm_results = None

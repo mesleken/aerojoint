@@ -170,7 +170,7 @@ export const GeometryEditor: React.FC<Props> = ({
             {/* Delik Tablo Başlıkları */}
             <div style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(6, 1fr) 30px',
+              gridTemplateColumns: 'repeat(6, minmax(0, 1fr)) 30px',
               gap: '6px',
               fontSize: '0.7rem',
               fontWeight: 600,
@@ -190,7 +190,7 @@ export const GeometryEditor: React.FC<Props> = ({
             {holes.map((hole, idx) => (
               <div key={idx} style={{
                 background: 'var(--bg-input)', padding: '6px 8px', borderRadius: '6px',
-                border: '1px solid var(--border-color)', display: 'grid', gridTemplateColumns: 'repeat(6, 1fr) 30px', gap: '6px', alignItems: 'center'
+                border: '1px solid var(--border-color)', display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr)) 30px', gap: '6px', alignItems: 'center'
               }}>
                 <input
                   type="number" className="form-input" placeholder="X"

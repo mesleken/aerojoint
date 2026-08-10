@@ -22,7 +22,11 @@
       },
       "ply_thickness": 0.125,
       "density": 1.6,
-      "notes": "Standart havacılık test malzemesi"
+      "notes": "Standart havacılık test malzemesi",
+      "thermal": {
+        "alpha1": -1.8e-07,
+        "alpha2": 2.25e-05
+      }
     },
     "AS4_3501_6": {
       "name": "AS4/3501-6 Carbon/Epoxy",
@@ -44,7 +48,11 @@
       },
       "ply_thickness": 0.188,
       "density": 1.58,
-      "notes": "Yaygın havacılık yapısal prepreg"
+      "notes": "Yaygın havacılık yapısal prepreg",
+      "thermal": {
+        "alpha1": -9e-07,
+        "alpha2": 2.88e-05
+      }
     },
     "IM7_8552": {
       "name": "IM7/8552 Carbon/Epoxy",
@@ -66,7 +74,11 @@
       },
       "ply_thickness": 0.131,
       "density": 1.57,
-      "notes": "Yüksek performanslı ara modüllü elyaf sistemi"
+      "notes": "Yüksek performanslı ara modüllü elyaf sistemi",
+      "thermal": {
+        "alpha1": -4e-07,
+        "alpha2": 2.56e-05
+      }
     },
     "E_GLASS_EPOXY": {
       "name": "E-Glass/Epoxy",
@@ -88,7 +100,11 @@
       },
       "ply_thickness": 0.25,
       "density": 2.1,
-      "notes": "Cam elyaf standart test malzemesi"
+      "notes": "Cam elyaf standart test malzemesi",
+      "thermal": {
+        "alpha1": 8.6e-06,
+        "alpha2": 2.21e-05
+      }
     }
   }
 }

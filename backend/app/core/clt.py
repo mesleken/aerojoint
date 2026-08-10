@@ -19,6 +19,10 @@ class OrthotropicMaterial:
     S12: float         # Düzlem-içi kayma mukavemeti (MPa)
     S23: Optional[float] = None  # Enine kayma mukavemeti (opsiyonel)
     
+    # Isıl genleşme katsayıları (CTE) - 1/°C (opsiyonel, termal analiz için)
+    alpha1: float = 0.0  # Elyaf yönü ısıl genleşme katsayısı
+    alpha2: float = 0.0  # Elyafa dik ısıl genleşme katsayısı
+    
     @property
     def nu21(self) -> float:
         """Karşılıklılık ilişkisinden hesaplanan minör Poisson oranı."""
@@ -147,6 +151,53 @@ class CLTEngine:
         return Qbar
     
     @staticmethod
+    def compute_thermal_loads(laminate: Laminate, delta_T: float) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Sıcaklık değişimi (Delta T) nedeniyle oluşan Termal Kuvvet {N^T} ve Moment {M^T} vektörlerini hesapla.
+        
+        {N^T} = Σₖ ∫ [Q̄]ₖ {α}ₖ ΔT dz
+        {M^T} = Σₖ ∫ [Q̄]ₖ {α}ₖ ΔT z dz
+        """
+        N_T = np.zeros(3)
+        M_T = np.zeros(3)
+        
+        if delta_T == 0.0:
+            return N_T, M_T
+            
+        z_coords = laminate.get_z_coordinates()
+        engine = CLTEngine()
+        
+        for k, ply in enumerate(laminate.plies):
+            z_bot = z_coords[k]
+            z_top = z_coords[k + 1]
+            
+            Q = engine.compute_Q(ply.material)
+            Qbar = engine.compute_Qbar(Q, ply.angle)
+            
+            # Katmanın global koordinatlardaki ısıl genleşme katsayısı vektörü {α_x, α_y, α_xy}
+            theta = np.radians(ply.angle)
+            m, n = np.cos(theta), np.sin(theta)
+            
+            a1 = ply.material.alpha1
+            a2 = ply.material.alpha2
+            
+            alpha_global = np.array([
+                a1 * m**2 + a2 * n**2,
+                a1 * n**2 + a2 * m**2,
+                2 * (a1 - a2) * m * n
+            ])
+            
+            # {N^T} ve {M^T} birikimi
+            integral_z = z_top - z_bot
+            integral_z2 = 0.5 * (z_top**2 - z_bot**2)
+            
+            thermal_stress = Qbar @ alpha_global * delta_T
+            N_T += thermal_stress * integral_z
+            M_T += thermal_stress * integral_z2
+            
+        return N_T, M_T
+    
+    @staticmethod
     def compute_ABD(laminate: Laminate) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         [A], [B], [D] rijitlik matrislerini hesapla.
@@ -202,21 +253,28 @@ class CLTEngine:
     @staticmethod
     def compute_ply_stresses(laminate: Laminate, 
                               N: np.ndarray,
-                              M: np.ndarray) -> list[dict]:
+                              M: np.ndarray,
+                              delta_T: float = 0.0) -> list[dict]:
         """
-        Her katmandaki gerilmeleri hesapla.
+        Her katmandaki gerilmeleri hesapla (Mekanik + Termal yükler).
         
         Adımlar:
-        1. ABD⁻¹ ile orta düzlem gerinim ve eğrilikleri çöz
-        2. Her katmanın alt/orta/üst z noktasında global gerinimleri hesapla
-        3. Q̄ ile global gerilmelere dönüştür
-        4. T(θ) ile malzeme koordinatlarına (σ₁, σ₂, τ₁₂) dönüştür
+        1. Termal yükleri hesapla {N^T}, {M^T}
+        2. Toplam etkili yükü bul: {N_eff} = {N} + {N^T}, {M_eff} = {M} + {M^T}
+        3. ABD⁻¹ ile orta düzlem gerinim ve eğrilikleri çöz
+        4. Global gerinimleri hesapla ve termal gerinimi çıkar: {ε_mech} = {ε_global} - {α}ΔT
+        5. Gerilmeleri Q̄ ve T(θ) ile hesapla
         """
         engine = CLTEngine()
         A, B, D = engine.compute_ABD(laminate)
         abd_inv = engine.compute_ABD_inverse(A, B, D)
         
-        load_vector = np.concatenate([N, M])
+        # Termal yüklerin hesabı ve efektif yük vektörünün oluşturulması
+        N_T, M_T = engine.compute_thermal_loads(laminate, delta_T)
+        N_eff = N + N_T
+        M_eff = M + M_T
+        
+        load_vector = np.concatenate([N_eff, M_eff])
         deformation = abd_inv @ load_vector
         epsilon_0 = deformation[:3]
         kappa = deformation[3:]
@@ -232,15 +290,31 @@ class CLTEngine:
             Q = engine.compute_Q(ply.material)
             Qbar = engine.compute_Qbar(Q, ply.angle)
             
+            
+            # Global termal genleşme vektörü
+            theta = np.radians(ply.angle)
+            m, n = np.cos(theta), np.sin(theta)
+            a1, a2 = ply.material.alpha1, ply.material.alpha2
+            alpha_global = np.array([
+                a1 * m**2 + a2 * n**2,
+                a1 * n**2 + a2 * m**2,
+                2 * (a1 - a2) * m * n
+            ])
+            thermal_strain_global = alpha_global * delta_T
+            
             ply_result = {'ply_id': k, 'angle': ply.angle, 'positions': {}}
             
             for label, z in [('bottom', z_bot), ('middle', z_mid), ('top', z_top)]:
                 epsilon_global = epsilon_0 + z * kappa
-                sigma_global = Qbar @ epsilon_global
+                
+                # Mekanik Hooke Yasası: {σ} = [Q̄] ({ε} - {ε_T})
+                epsilon_mechanical = epsilon_global - thermal_strain_global
+                sigma_global = Qbar @ epsilon_mechanical
                 sigma_local = engine.transform_stress_to_local(sigma_global, ply.angle)
                 
                 ply_result['positions'][label] = {
                     'epsilon_global': epsilon_global.tolist(),
+                    'epsilon_mechanical': epsilon_mechanical.tolist(),
                     'sigma_global': sigma_global.tolist(),
                     'sigma_local': sigma_local.tolist(),
                     'z': z

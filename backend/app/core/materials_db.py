@@ -57,21 +57,24 @@ class MaterialsDB:
             )
         
         mat = self._materials[material_id]
-        elastic = mat['elastic']
-        strength = mat['strength']
+        elastic = mat.get('elastic', {})
+        strength = mat.get('strength', {})
+        thermal = mat.get('thermal', {})
         
         return OrthotropicMaterial(
-            name=mat['name'],
-            E1=elastic['E1'],
-            E2=elastic['E2'],
-            G12=elastic['G12'],
-            nu12=elastic['nu12'],
-            Xt=strength['Xt'],
-            Xc=strength['Xc'],
-            Yt=strength['Yt'],
-            Yc=strength['Yc'],
-            S12=strength['S12'],
-            S23=strength.get('S23')
+            name=mat.get('name', material_id),
+            E1=elastic.get('E1', 0),
+            E2=elastic.get('E2', 0),
+            G12=elastic.get('G12', 0),
+            nu12=elastic.get('nu12', 0),
+            Xt=strength.get('Xt', 0),
+            Xc=strength.get('Xc', 0),
+            Yt=strength.get('Yt', 0),
+            Yc=strength.get('Yc', 0),
+            S12=strength.get('S12', 0),
+            S23=strength.get('S23'),
+            alpha1=thermal.get('alpha1', 0.0),
+            alpha2=thermal.get('alpha2', 0.0)
         )
     
     def add_material(self, material_id: str, material_data: dict) -> bool:
