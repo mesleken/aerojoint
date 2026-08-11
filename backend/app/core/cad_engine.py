@@ -27,38 +27,69 @@ class CADEngine:
     def __init__(self):
         pass
 
+class CADEngine:
+    """3B CAD ve Topoloji İşleme Çekirdeği."""
+
+    def __init__(self):
+        pass
+
     def load_cad_file(self, file_content: bytes, filename: str) -> Dict[str, Any]:
         """
-        CAD dosyasını (STL, OBJ, STEP, PLY, OFF) yükler, üçgen ağına (mesh) dönüştürür 
-        ve 3B görselleştirme (GLTF) verileri ile yüzey istatistiklerini çıkarır.
+        CAD dosyasını (STL, OBJ, STEP, PLY, OFF) yükler, SVD PCA ile ana eksenlerine 
+        döndürerek gerçek dönüş dönmezliğini (Rotation Invariance) yakalar.
+        Hata durumunda sahte geometri üretmez, açık hata fırlatır.
         """
         ext = filename.split('.')[-1].lower()
         
-        try:
-            if ext in ['step', 'stp', 'iges', 'igs'] and HAS_GMSH:
-                mesh, bounds_override = self._load_step_via_gmsh(file_content, ext)
-            elif ext in ['stl', 'obj', 'ply', 'off', 'gltf', 'glb']:
-                mesh = trimesh.load(trimesh.util.wrap_as_stream(file_content), file_type=ext)
-                bounds_override = None
-            else:
-                mesh = self._create_parametric_lug_mesh()
-                bounds_override = None
-        except Exception as e:
-            print(f"CAD Load Warning: {e}, fallback mesh kullaniliyor.")
-            mesh = self._create_parametric_lug_mesh()
+        if ext in ['step', 'stp', 'iges', 'igs']:
+            if not HAS_GMSH:
+                raise ValueError("STEP/IGES dosyalarını okumak için Gmsh OpenCascade kütüphanesi yüklenemedi.")
+            mesh, bounds_override = self._load_step_via_gmsh(file_content, ext)
+        elif ext in ['stl', 'obj', 'ply', 'off', 'gltf', 'glb']:
+            mesh = trimesh.load(trimesh.util.wrap_as_stream(file_content), file_type=ext)
             bounds_override = None
+        else:
+            raise ValueError(f"Desteklenmeyen CAD dosya formatı: .{ext}")
 
         if isinstance(mesh, trimesh.Scene):
             mesh = mesh.dump(concatenate=True)
 
+        # 1. Yüzey Alanı Ağırlıklı SVD PCA ile Ana Eksen Hizalaması (Area-Weighted Rotation Invariance)
+        # Delik çevresindeki sıklaşmış üçgenlemenin ana eksenleri saptırmasını engeller
+        triangles = np.array(mesh.triangles)
+        face_centroids = np.mean(triangles, axis=1) # (N_faces, 3)
+        face_areas = np.array(mesh.area_faces)      # (N_faces,)
+        
+        total_area = np.sum(face_areas)
+        if total_area > 1e-12:
+            weighted_center = np.sum(face_centroids * face_areas[:, np.newaxis], axis=0) / total_area
+            centered_centroids = face_centroids - weighted_center
+            weighted_cov = (centered_centroids.T * face_areas) @ centered_centroids / total_area
+            _, _, Vh = np.linalg.svd(weighted_cov)
+            
+            vertices_raw = np.array(mesh.vertices)
+            rotated_verts = (vertices_raw - weighted_center) @ Vh.T
+        else:
+            vertices_raw = np.array(mesh.vertices)
+            rotated_verts = vertices_raw
+
+        min_pca = np.min(rotated_verts, axis=0)
+        max_pca = np.max(rotated_verts, axis=0)
+        dims_pca = max_pca - min_pca
+        
+        # Eksen sıralaması (En büyük: Genişlik W, İkinci: Yükseklik H, En küçük: Kalınlık t)
+        sorted_dims = sorted([float(dims_pca[0]), float(dims_pca[1]), float(dims_pca[2])], reverse=True)
+        width = max(10.0, round(sorted_dims[0], 2))
+        height = max(10.0, round(sorted_dims[1], 2))
+        thickness = max(0.25, round(sorted_dims[2], 2))
+
+        # Ham Bounding Box
+        bounds = bounds_override if bounds_override is not None else [np.min(vertices_raw, axis=0).tolist(), np.max(vertices_raw, axis=0).tolist()]
+        min_x, min_y, min_z = bounds[0][0], bounds[0][1], bounds[0][2]
+
         vertices = mesh.vertices.tolist() if hasattr(mesh, 'vertices') else []
         faces = mesh.faces.tolist() if hasattr(mesh, 'faces') else []
         normals = mesh.vertex_normals.tolist() if hasattr(mesh, 'vertex_normals') else []
-        
-        if bounds_override is not None:
-            bounds = bounds_override
-        else:
-            bounds = mesh.bounds.tolist() if hasattr(mesh, 'bounds') else [[0, 0, 0], [100, 100, 10]]
 
         # Otomatik Delik Tespiti Algoritması
         raw_holes = self.detect_holes_from_mesh(mesh)
@@ -66,35 +97,25 @@ class CADEngine:
         # Geometri yüzey eğrilik profil analizi
         curvature_info = self.analyze_surface_curvature(mesh)
 
-        # 3B Bounding Box Eksen Normalize & PCA Yönelim Bağımsızlığı (Rotation Invariance)
-        min_x, min_y, min_z = bounds[0][0], bounds[0][1], bounds[0][2]
-        dim_x = round(bounds[1][0] - bounds[0][0], 2)
-        dim_y = round(bounds[1][1] - bounds[0][1], 2)
-        dim_z = round(bounds[1][2] - bounds[0][2], 2)
-
-        # Eksen sıralaması (En büyük: Genişlik W, İkinci: Yükseklik H, En küçük: Kalınlık t)
-        sorted_dims = sorted([dim_x, dim_y, dim_z], reverse=True)
-        width = max(10.0, sorted_dims[0])
-        height = max(10.0, sorted_dims[1])
-        thickness = max(0.25, sorted_dims[2])
-
-        # Delikleri Lokal (0,0) Orijinine Normalize Et (Negatif Eksen Düzeltmesi)
+        # Delikleri Lokal (0,0) Orijinine Normalize Et ve Sınır Dışı Delikleri Raporla (Clamping Yapma)
         normalized_holes = []
+        warnings = []
         for h in raw_holes:
             norm_center_x = round(h["center"][0] - min_x, 2)
             norm_center_y = round(h["center"][1] - min_y, 2)
             norm_center_z = round(h["center"][2] - min_z, 2)
             
-            # Sınır güvenlik kontrolü
-            norm_center_x = max(1.0, min(width - 1.0, norm_center_x))
-            norm_center_y = max(1.0, min(height - 1.0, norm_center_y))
+            # Sınır güvenlik kontrolü: Sınır dışındaki delikleri sessizce sürükleme (clamping yapma), reddet
+            r = h["diameter"] / 2.0
+            if (norm_center_x - r < 0 or norm_center_x + r > width or norm_center_y - r < 0 or norm_center_y + r > height):
+                warnings.append(f"Tespit edilen {h['name']} ({norm_center_x}, {norm_center_y}) panel sınırlarının dışında kaldığı için elendi.")
+                continue
 
             h_copy = dict(h)
             h_copy["center"] = [norm_center_x, norm_center_y, norm_center_z]
             normalized_holes.append(h_copy)
 
         # Otomatik Katman Dizilimi Hesabı (Otomatik Layup / Ply Stacker)
-        # 1 katman nominal 0.125 mm kabul edilir
         n_plies = max(2, int(round(thickness / 0.125)))
         standard_angles = [0, 45, -45, 90]
         suggested_plies = []
@@ -116,7 +137,7 @@ class CADEngine:
             "bounds": {
                 "min": bounds[0],
                 "max": bounds[1],
-                "dimensions": [dim_x, dim_y, dim_z]
+                "dimensions": [width, height, thickness]
             },
             "mesh_data": {
                 "vertices": vertices,
@@ -124,6 +145,7 @@ class CADEngine:
                 "normals": normals
             },
             "detected_holes": normalized_holes,
+            "warnings": warnings,
             "curvature_profile": curvature_info
         }
 

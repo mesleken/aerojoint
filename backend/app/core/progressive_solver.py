@@ -26,19 +26,42 @@ class PDMStepResult:
 
 
 class ProgressiveDamageSolver:
-    """Adım Adım İleri Düzey Kopma Çözücüsü."""
+    """Adım Adım İleri Düzey Kopma Çözücüsü (Progressive Damage Modeling - PDM)."""
 
     def __init__(self, laminate: Laminate):
         self.laminate = laminate
         self.clt_engine = CLTEngine()
         self.failure_engine = FailureCriteriaEngine()
         self.fem_solver = FEMSolver(laminate)
+        
+        # Dönüşüm matrislerini önceden hesapla (Performans Optimizasyonu)
+        self.T_matrices = []
+        self.T_inv_matrices = []
+        for ply in laminate.plies:
+            rad = np.radians(ply.angle)
+            m, n = np.cos(rad), np.sin(rad)
+            T = np.array([
+                [m**2, n**2, 2*m*n],
+                [n**2, m**2, -2*m*n],
+                [-m*n, m*n, m**2 - n**2]
+            ])
+            # T^{-1}(θ) = T(-θ)
+            rad_neg = np.radians(-ply.angle)
+            m_n, n_n = np.cos(rad_neg), np.sin(rad_neg)
+            T_inv = np.array([
+                [m_n**2, n_n**2, 2*m_n*n_n],
+                [n_n**2, m_n**2, -2*m_n*n_n],
+                [-m_n*n_n, m_n*n_n, m_n**2 - n_n**2]
+            ])
+            self.T_matrices.append(T)
+            self.T_inv_matrices.append(T_inv)
 
     def run_pdm(self, mesh: MeshData, nodal_forces: Dict[int, List[float]], 
                 fixed_nodes: List[int], total_applied_load: float, constraint_type: str = 'fixed',
-                num_steps: int = 20) -> Dict[str, Any]:
+                num_steps: int = 25) -> Dict[str, Any]:
         """
-        Artırımlı Yükleme (Incremental Loading) ve Hasar Yayılım Çözümü.
+        Adaptif Artırımlı Yükleme (Adaptive Incremental Loading) ve Hasar Yayılım Çözümü.
+        Sabit tavan kullanılmaz; nihai göçme (Ultimate Failure) gerçekleşene kadar yük adaptif olarak artırılır.
         """
         n_elements = len(mesh.elements)
         n_plies = len(self.laminate.plies)
@@ -56,10 +79,14 @@ class ProgressiveDamageSolver:
         ultimate_load = 0.0
         is_ultimate_failed = False
 
-        # Her adım için yük faktörü (0.2, 0.4, 0.6, 0.8, 1.0, vb.)
-        load_factors = np.linspace(0.2, 1.0, num_steps)
+        # ADAPTİF YÜK TARAMA: Göçme gerçekleşene kadar yük adım adım artırılır
+        factor = 0.2
+        step_increment = 0.1
+        max_search_factor = 10.0 # Maksimum 10 katına kadar adaptif arama
+        step_idx = 0
 
-        for step_idx, factor in enumerate(load_factors):
+        while not is_ultimate_failed and factor <= max_search_factor:
+            step_idx += 1
             current_forces = {
                 nid: [fx * factor, fy * factor]
                 for nid, (fx, fy) in nodal_forces.items()
@@ -67,8 +94,9 @@ class ProgressiveDamageSolver:
             current_applied_load = total_base_force * factor
 
             converged = False
-            max_inner_iters = 4
+            max_inner_iters = 5
             inner_iter = 0
+            u_full = None
 
             while not converged and inner_iter < max_inner_iters:
                 inner_iter += 1
@@ -95,26 +123,20 @@ class ProgressiveDamageSolver:
                     F_f = F[free_dofs]
                     u_free = spsolve(K_ff, F_f)
                     
-                    # Fiziksel kopma / singüler matris tespiti (Deformasyon > 50 mm ise yapı kopmuştur)
+                    # Fiziksel yapay göçme tespiti (Deformasyon > 50 mm ise yapı stabilitesini yitirmiştir)
                     if np.max(np.abs(u_free)) > 50.0:
                         is_ultimate_failed = True
                         break
                 except Exception:
-                    # Matris singüler olduysa yapı çökmüştür (Ultimate failure)
+                    # Matris singüler olduysa yapı fiziksel olarak taşımayı bırakmıştır (Kopma)
                     is_ultimate_failed = True
                     break
 
                 u_full = np.zeros(n_dof)
                 u_full[free_dofs] = u_free
 
-                # 3 & 4. Gerilmeleri Eleman Bazında Hesapla ve Katman Katman Hashin Kontrolü Yap
+                # 3 & 4. 4 Gauss Noktasında Gerilme ve Katman Katman Hashin Kontrolü Yap
                 new_damage = False
-                
-                # Görselleştirme için nodal stress'leri oluştur (animasyon karesi için)
-                # Orijinal C_eff'yi kullanarak yaklaşık stress çıkarıyoruz
-                elem_stresses = self.fem_solver._compute_element_stresses(mesh, u_full)
-                nodal_stresses = self.fem_solver._extrapolate_to_nodes(mesh, elem_stresses)
-                stress_frames.append(nodal_stresses.copy())
 
                 for elem_idx, elem_nodes in enumerate(mesh.elements):
                     xe = mesh.nodes[elem_nodes, 0]
@@ -124,25 +146,26 @@ class ProgressiveDamageSolver:
                         dofs.extend([2*ni, 2*ni+1])
                     ue = u_full[dofs]
 
-                    # Merkez noktadaki strain'i (şekil değiştirme) hesapla
-                    dN = Q4Element.shape_function_derivatives(0.0, 0.0)
-                    J = dN @ np.column_stack([xe, ye])
-                    dN_dxy = np.linalg.inv(J) @ dN
-                    
-                    B = np.zeros((3, 8))
-                    for i in range(4):
-                        B[0, 2*i]     = dN_dxy[0, i]
-                        B[1, 2*i + 1] = dN_dxy[1, i]
-                        B[2, 2*i]     = dN_dxy[1, i]
-                        B[2, 2*i + 1] = dN_dxy[0, i]
+                    # 4 Gauss Noktasında Gerinimi Oku (Hassas Pik Tespiti)
+                    gauss_strains = []
+                    for (xi, eta) in Q4Element.GAUSS_POINTS:
+                        dN = Q4Element.shape_function_derivatives(xi, eta)
+                        J = dN @ np.column_stack([xe, ye])
+                        dN_dxy = np.linalg.inv(J) @ dN
                         
-                    epsilon = B @ ue
+                        B = np.zeros((3, 8))
+                        for i in range(4):
+                            B[0, 2*i]     = dN_dxy[0, i]
+                            B[1, 2*i + 1] = dN_dxy[1, i]
+                            B[2, 2*i]     = dN_dxy[1, i]
+                            B[2, 2*i + 1] = dN_dxy[0, i]
+                        gauss_strains.append(B @ ue)
 
                     for ply_idx, ply in enumerate(self.laminate.plies):
                         has_mat_dmg = damage_state[elem_idx, ply_idx, 0]
                         has_fib_dmg = damage_state[elem_idx, ply_idx, 1]
 
-                        # Zayıflatılmış (veya hasarsız) katman stiffness'ı
+                        # Zayıflatılmış malzeme özellikleri
                         mat = ply.material
                         E1 = mat.E1 * (0.01 if has_fib_dmg else 1.0)
                         E2 = mat.E2 * (0.01 if has_fib_dmg else (0.1 if has_mat_dmg else 1.0))
@@ -151,56 +174,65 @@ class ProgressiveDamageSolver:
                         
                         nu21 = nu12 * E2 / E1
                         denom = max(1e-9, 1.0 - nu12 * nu21)
-                        Q11 = E1 / denom
-                        Q22 = E2 / denom
-                        Q12 = nu12 * E2 / denom
-                        Q66 = G12
-                        Q = np.array([[Q11, Q12, 0.0], [Q12, Q22, 0.0], [0.0, 0.0, Q66]])
-
-                        rad = np.radians(ply.angle)
-                        m, n = np.cos(rad), np.sin(rad)
-                        T = np.array([
-                            [m**2, n**2, 2*m*n],
-                            [n**2, m**2, -2*m*n],
-                            [-m*n, m*n, m**2 - n**2]
+                        Q = np.array([
+                            [E1 / denom, nu12 * E2 / denom, 0.0],
+                            [nu12 * E2 / denom, E2 / denom, 0.0],
+                            [0.0, 0.0, G12]
                         ])
-                        T_inv = np.linalg.inv(T)
-                        
-                        # Global stress -> Local stress
+
+                        T = self.T_matrices[ply_idx]
+                        T_inv = self.T_inv_matrices[ply_idx]
                         Qbar = T_inv @ Q @ T_inv.T
-                        sg = Qbar @ epsilon
-                        sl = T @ sg
-                        
-                        s1, s2, t12 = sl[0], sl[1], sl[2]
 
-                        # Hashin Hasar Kriteri (thermal stres 0 olarak geçilir)
-                        hashin = self.failure_engine.hashin_criteria([s1, s2, t12], [0.0, 0.0, 0.0], ply.material)
+                        # 4 Gauss Noktasının En Kritik Hasar İndeksini (max(FI), NOT mean) Bul
+                        max_hashin_mat = 0.0
+                        max_hashin_fib = 0.0
 
-                        if (hashin['matrix_tension'] >= 1.0 or hashin['matrix_compression'] >= 1.0) and not damage_state[elem_idx, ply_idx, 0]:
+                        for eps in gauss_strains:
+                            sg = Qbar @ eps
+                            sl = T @ sg
+                            s1, s2, t12 = sl[0], sl[1], sl[2]
+                            h_res = self.failure_engine.hashin_criteria([s1, s2, t12], [0.0, 0.0, 0.0], ply.material)
+                            
+                            mat_fi = max(h_res['matrix_tension'], h_res['matrix_compression'])
+                            fib_fi = max(h_res['fiber_tension'], h_res['fiber_compression'])
+                            if mat_fi > max_hashin_mat: max_hashin_mat = mat_fi
+                            if fib_fi > max_hashin_fib: max_hashin_fib = fib_fi
+
+                        if max_hashin_mat >= 1.0 and not damage_state[elem_idx, ply_idx, 0]:
                             damage_state[elem_idx, ply_idx, 0] = True
                             new_damage = True
                             if first_ply_failure_load == 0.0:
                                 first_ply_failure_load = current_applied_load
 
-                        if (hashin['fiber_tension'] >= 1.0 or hashin['fiber_compression'] >= 1.0) and not damage_state[elem_idx, ply_idx, 1]:
+                        if max_hashin_fib >= 1.0 and not damage_state[elem_idx, ply_idx, 1]:
                             damage_state[elem_idx, ply_idx, 1] = True
                             new_damage = True
 
                 if not new_damage:
                     converged = True
 
+            if is_ultimate_failed:
+                break
+
+            # SADECE Dış Yük Adımı Yakınsadığında Tek Bir Animasyon Karesi Sakla
+            if u_full is not None:
+                elem_stresses = self.fem_solver._compute_element_stresses(mesh, u_full)
+                nodal_stresses, _ = self.fem_solver._extrapolate_to_nodes(mesh, elem_stresses)
+                stress_frames.append(nodal_stresses.copy())
+
             matrix_failed_count = int(np.sum(damage_state[:, :, 0]))
             fiber_failed_count = int(np.sum(damage_state[:, :, 1]))
 
-            # Lokal Hasar Kriteri: Bir çatlak hattı oluşumu (yaklaşık sqrt(N) mertebesinde fiber kopması)
-            # Yırtılma veya net-tension koptuğunda tüm levhanın değil, belirli bir kesitin kopması yeterlidir.
-            critical_fiber_count = n_plies * max(4, int(np.sqrt(n_elements) * 0.5))
-            
-            if fiber_failed_count > critical_fiber_count:
-                is_ultimate_failed = True
+            # ADAPTİF ADIM DARALTMA (Adaptive Step Refinement):
+            # Hasar henüz başlamadıysa hızlı adımla (0.10), hasar başladığında %2 hassasiyete (0.02) daralt
+            if matrix_failed_count > 0 or fiber_failed_count > 0:
+                step_increment = 0.02
+            else:
+                step_increment = 0.10
 
             history.append(PDMStepResult(
-                step=step_idx + 1,
+                step=step_idx,
                 load_factor=float(factor),
                 applied_load=float(current_applied_load),
                 failed_matrix_count=matrix_failed_count,
@@ -211,8 +243,7 @@ class ProgressiveDamageSolver:
             if not is_ultimate_failed:
                 ultimate_load = current_applied_load
 
-            if is_ultimate_failed:
-                break
+            factor += step_increment
 
         if first_ply_failure_load == 0.0:
             first_ply_failure_load = total_base_force
@@ -231,53 +262,37 @@ class ProgressiveDamageSolver:
         n_dof = 2 * n_nodes
         thickness = self.laminate.total_thickness
 
-        rows, cols, vals = [], [], []
+        n_elems = len(mesh.elements)
+        total_entries = n_elems * 64
+        rows = np.zeros(total_entries, dtype=int)
+        cols = np.zeros(total_entries, dtype=int)
+        vals = np.zeros(total_entries, dtype=float)
 
+        ptr = 0
         for elem_idx, elem_nodes in enumerate(mesh.elements):
-            # Elemanın efektif A matrisini katman katman hesapla
             A_elem = np.zeros((3, 3))
             
             for ply_idx, ply in enumerate(self.laminate.plies):
                 has_mat_dmg = damage_state[elem_idx, ply_idx, 0]
                 has_fib_dmg = damage_state[elem_idx, ply_idx, 1]
 
-                # Orijinal malzeme özellikleri
                 mat = ply.material
-                E1 = mat.E1
-                E2 = mat.E2
-                G12 = mat.G12
+                E1 = mat.E1 * (0.01 if has_fib_dmg else 1.0)
+                E2 = mat.E2 * (0.01 if has_fib_dmg else (0.1 if has_mat_dmg else 1.0))
+                G12 = mat.G12 * (0.01 if has_fib_dmg else (0.2 if has_mat_dmg else 1.0))
                 nu12 = mat.nu12
-
-                # Zayıflatma Kuralları (Stiffness Degradation Rules)
-                if has_fib_dmg:
-                    E1 *= 0.01
-                    E2 *= 0.01
-                    G12 *= 0.01
-                elif has_mat_dmg:
-                    E2 *= 0.1
-                    G12 *= 0.2
 
                 nu21 = nu12 * E2 / E1
                 denom = max(1e-9, 1.0 - nu12 * nu21)
                 
-                Q11 = E1 / denom
-                Q22 = E2 / denom
-                Q12 = nu12 * E2 / denom
-                Q66 = G12
-
-                Q = np.array([[Q11, Q12, 0.0], [Q12, Q22, 0.0], [0.0, 0.0, Q66]])
-                
-                # Dönüştürülmüş Q̄ matrisi
-                rad = np.radians(ply.angle)
-                m, n = np.cos(rad), np.sin(rad)
-                T = np.array([
-                    [m**2, n**2, 2*m*n],
-                    [n**2, m**2, -2*m*n],
-                    [-m*n, m*n, m**2 - n**2]
+                Q = np.array([
+                    [E1 / denom, nu12 * E2 / denom, 0.0],
+                    [nu12 * E2 / denom, E2 / denom, 0.0],
+                    [0.0, 0.0, G12]
                 ])
-                T_inv = np.linalg.inv(T)
-                Qbar = T_inv @ Q @ T_inv.T
                 
+                T_inv = self.T_inv_matrices[ply_idx]
+                Qbar = T_inv @ Q @ T_inv.T
                 A_elem += Qbar * ply.thickness
 
             C_elem = A_elem / thickness
@@ -292,9 +307,10 @@ class ProgressiveDamageSolver:
 
             for i_l, i_g in enumerate(dofs):
                 for j_l, j_g in enumerate(dofs):
-                    rows.append(i_g)
-                    cols.append(j_g)
-                    vals.append(Ke[i_l, j_l])
+                    rows[ptr] = i_g
+                    cols[ptr] = j_g
+                    vals[ptr] = Ke[i_l, j_l]
+                    ptr += 1
 
         K = sparse.coo_matrix((vals, (rows, cols)), shape=(n_dof, n_dof))
         return K.tocsr()
