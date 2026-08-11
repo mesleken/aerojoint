@@ -33,6 +33,12 @@ class FailureResult:
     
     # Durum
     is_failed: bool = False
+    thermal_fail: bool = False
+    assumptions: list = None
+
+    def __post_init__(self):
+        if self.assumptions is None:
+            self.assumptions = []
 
 
 class FailureCriteriaEngine:
@@ -72,8 +78,14 @@ class FailureCriteriaEngine:
         Xt, Xc = material.Xt, material.Xc
         Yt, Yc = material.Yt, material.Yc
         S12 = material.S12
-        S23 = material.S23 if material.S23 is not None else Yc / 2.0
         
+        assumptions = []
+        if material.S23 is None:
+            S23 = Yc / 2.0
+            assumptions.append(f"Enine kayma mukavemeti (S23) girilmediği için S23 = Yc/2.0 = {S23:.1f} MPa kabul edildi.")
+        else:
+            S23 = material.S23
+
         # Fiber Tension: Condition (sigma_1(lam) >= 0)
         A_ft = (sm[0]/Xt)**2 + (sm[2]/S12)**2
         B_ft = 2*(sm[0]*st[0])/(Xt**2) + 2*(sm[2]*st[2])/(S12**2)
@@ -150,7 +162,8 @@ class FailureCriteriaEngine:
             'max_fi': max_fi,
             'dominant_mode': dominant_mode,
             'mos': mos,
-            'thermal_fail': thermal_fail
+            'thermal_fail': thermal_fail,
+            'assumptions': assumptions
         }
 
     @staticmethod
@@ -169,6 +182,8 @@ class FailureCriteriaEngine:
         F66 = 1.0 / (S12**2)
         F12 = -0.5 * np.sqrt(F11 * F22)
         
+        assumptions = ["Tsai-Wu F12 etkileşim katsayısı biaksiyel deneysel veri yokluğunda F12 = -0.5*sqrt(F11*F22) olarak kabul edildi."]
+
         A_tw = F11*sm[0]**2 + F22*sm[1]**2 + F66*sm[2]**2 + 2*F12*sm[0]*sm[1]
         
         B_tw = (F1*sm[0] + F2*sm[1] + 
@@ -184,7 +199,7 @@ class FailureCriteriaEngine:
         lam = lams[0] if lams else float('inf')
         mos = lam - 1.0 if lam != float('inf') else float('inf')
         
-        return {'fi': fi, 'mos': mos, 'thermal_fail': C_tw > 1.0}
+        return {'fi': fi, 'mos': mos, 'thermal_fail': C_tw > 1.0, 'assumptions': assumptions}
     
     def evaluate_ply(self, sigma_mech: list, sigma_therm: list,
                      material: OrthotropicMaterial, ply_id: int, 
@@ -199,8 +214,11 @@ class FailureCriteriaEngine:
         gov_crit = "Hashin" if hashin['mos'] <= tsai_wu['mos'] else "Tsai-Wu"
         
         # Eğer termal stresler tek başına kırılmaya yetiyorsa, mos negatif çıkar.
-        is_failed = min_mos < 0.0
+        thermal_fail = hashin['thermal_fail'] or tsai_wu['thermal_fail']
+        is_failed = min_mos < 0.0 or thermal_fail
         
+        combined_assumptions = list(set(hashin.get('assumptions', []) + tsai_wu.get('assumptions', [])))
+
         return FailureResult(
             ply_id=ply_id,
             angle=angle,
@@ -215,5 +233,7 @@ class FailureCriteriaEngine:
             mos_tsai_wu=tsai_wu['mos'],
             min_mos=min_mos,
             governing_criterion=gov_crit,
-            is_failed=is_failed
+            is_failed=is_failed,
+            thermal_fail=thermal_fail,
+            assumptions=combined_assumptions
         )

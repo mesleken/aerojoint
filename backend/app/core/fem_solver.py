@@ -23,8 +23,9 @@ class FEMResult:
     """FEM çözüm sonuçları."""
     displacements: np.ndarray
     element_stresses: list
-    nodal_stresses: np.ndarray
-    ply_stresses: list
+    nodal_stresses: np.ndarray              # Ortalanmış (Görselleştirme için)
+    element_corner_stresses: np.ndarray     # Ortalanmamış (Konservatif kırılma hesabı için)
+    ply_stresses: list                      # Katman gerilmeleri (Hem ortalanmış hem ortalanmamış)
     computation_time_ms: float
 
 
@@ -47,13 +48,19 @@ class FEMSolver:
             self.Qbar_per_ply.append(Qbar)
     
     def assemble_global_stiffness(self, mesh: MeshData) -> sparse.csr_matrix:
-        """Global K matrisini COO → CSR sparse formatında montajla."""
+        """Global K matrisini Vektörize Ön-Tahsisli COO → CSR sparse formatında montajla."""
         n_nodes = len(mesh.nodes)
         n_dof = 2 * n_nodes
         thickness = self.laminate.total_thickness
         
-        rows, cols, vals = [], [], []
+        n_elems = len(mesh.elements)
+        # Her Q4 eleman 8x8 = 64 girdiye sahiptir
+        total_entries = n_elems * 64
+        rows = np.zeros(total_entries, dtype=int)
+        cols = np.zeros(total_entries, dtype=int)
+        vals = np.zeros(total_entries, dtype=float)
         
+        ptr = 0
         for elem_nodes in mesh.elements:
             xe = mesh.nodes[elem_nodes, 0]
             ye = mesh.nodes[elem_nodes, 1]
@@ -66,9 +73,10 @@ class FEMSolver:
             
             for i_l, i_g in enumerate(dofs):
                 for j_l, j_g in enumerate(dofs):
-                    rows.append(i_g)
-                    cols.append(j_g)
-                    vals.append(Ke[i_l, j_l])
+                    rows[ptr] = i_g
+                    cols[ptr] = j_g
+                    vals[ptr] = Ke[i_l, j_l]
+                    ptr += 1
         
         K = sparse.coo_matrix((vals, (rows, cols)), shape=(n_dof, n_dof))
         return K.tocsr()
@@ -117,8 +125,10 @@ class FEMSolver:
         
         # Gerilme geri hesabı
         element_stresses = self._compute_element_stresses(mesh, u_full)
-        nodal_stresses = self._extrapolate_to_nodes(mesh, element_stresses)
-        ply_stresses = self._compute_ply_stresses(nodal_stresses)
+        nodal_stresses, element_corner_stresses = self._extrapolate_to_nodes(mesh, element_stresses)
+        
+        # Kırılma hesabı için ORTALANMAMIŞ eleman köşe gerilmeleri kullanılır (Konservatif pik gerilmeler)
+        ply_stresses = self._compute_ply_stresses(nodal_stresses, element_corner_stresses, mesh)
         
         t_end = time.perf_counter()
         
@@ -126,6 +136,7 @@ class FEMSolver:
             displacements=displacements,
             element_stresses=element_stresses,
             nodal_stresses=nodal_stresses,
+            element_corner_stresses=element_corner_stresses,
             ply_stresses=ply_stresses,
             computation_time_ms=(t_end - t_start) * 1000
         )
@@ -146,11 +157,16 @@ class FEMSolver:
     def _extrapolate_to_nodes(self, mesh, element_stresses):
         """
         Gauss noktalarında (±1/√3) hesaplanan gerilmeleri bilineer Q4 Ekstrapolasyon 
-        matrisi ile düğümlere (±1) ekstrapole eder ve komşu elemanlar arasında ortalamasını alır.
+        matrisi ile düğümlere (±1) ekstrapole eder.
+        Döndürür:
+          1) nodal_averaged_stresses: (N_nodes, 3) - Görselleştirme amaçlı ortalanmış
+          2) element_corner_stresses: (N_elements, 4, 3) - Ortalanmamış ham pik gerilmeler (Kırılma analizi için)
         """
         n_nodes = len(mesh.nodes)
+        n_elems = len(mesh.elements)
         nodal_sum = np.zeros((n_nodes, 3))
         nodal_count = np.zeros(n_nodes)
+        element_corner_stresses = np.zeros((n_elems, 4, 3))
         
         # 4 Gauss noktasından (4x3) 4 Düğüme (4x3) Ekstrapolasyon Matrisi (E_extrap)
         s3_2 = np.sqrt(3.0) / 2.0
@@ -163,17 +179,19 @@ class FEMSolver:
 
         for elem_idx, elem_nodes in enumerate(mesh.elements):
             gauss_stresses = np.array(element_stresses[elem_idx]) # (4, 3)
-            # Gauss noktalarından düğümlere ekstrapolasyon
+            # Gauss noktalarından düğümlere ekstrapolasyon (Ortalanmamış)
             node_stresses_elem = E_extrap @ gauss_stresses # (4, 3)
+            element_corner_stresses[elem_idx] = node_stresses_elem
             
             for local_idx, ni in enumerate(elem_nodes):
                 nodal_sum[ni] += node_stresses_elem[local_idx]
                 nodal_count[ni] += 1
                 
         nodal_count[nodal_count == 0] = 1
-        return nodal_sum / nodal_count[:, np.newaxis]
+        nodal_averaged = nodal_sum / nodal_count[:, np.newaxis]
+        return nodal_averaged, element_corner_stresses
     
-    def _compute_ply_stresses(self, nodal_stresses):
+    def _compute_ply_stresses(self, nodal_stresses, element_corner_stresses, mesh):
         # Gerçek CLT Kinematiği: Global birleşik gerilmelerden -> Global gerinim (Strain) -> Katman bazlı gerilme (Stress)
         C_eff_inv = np.linalg.inv(self.C_eff)
         
@@ -188,18 +206,26 @@ class FEMSolver:
             ])
             
             Qbar = self.Qbar_per_ply[ply_idx]
-            
-            # Katmanın gerçek global gerilmesi: sigma_global_k = Qbar * epsilon_global
-            # epsilon_global = C_eff_inv * sigma_avg
-            # Dolayısıyla: sigma_global_k = (Qbar * C_eff_inv) * sigma_avg
             M_trans = Qbar @ C_eff_inv
             
+            # 1. Ortalanmış Düğüm Gerilmeleri (Görselleştirme için)
             ply_nodal_global = np.array([M_trans @ sg for sg in nodal_stresses])
             ply_nodal_local = np.array([T @ sg for sg in ply_nodal_global])
             
+            # 2. Ortalanmamış Eleman Köşe Gerilmeleri (Konservatif Kırılma Değerlendirmesi için)
+            n_elems = len(element_corner_stresses)
+            elem_corner_local = np.zeros((n_elems, 4, 3))
+            for e_idx in range(n_elems):
+                for c_idx in range(4):
+                    sg_raw = element_corner_stresses[e_idx, c_idx]
+                    sg_glob = M_trans @ sg_raw
+                    elem_corner_local[e_idx, c_idx] = T @ sg_glob
+
             ply_results.append({
                 'ply_id': ply_idx, 'angle': ply.angle,
                 'nodal_stresses_local': ply_nodal_local,
-                'nodal_stresses_global': ply_nodal_global
+                'nodal_stresses_global': ply_nodal_global,
+                'elem_corner_stresses_local': elem_corner_local
             })
         return ply_results
+

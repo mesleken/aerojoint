@@ -9,6 +9,7 @@ interface Props {
   constraintType: string;
   meshGlobal: number;
   meshHole: number;
+  bypassLoad?: number;
   enablePDM?: boolean;
   failureCriterion?: string;
   onChangeWidth: (w: number) => void;
@@ -17,15 +18,16 @@ interface Props {
   onChangeConstraint: (c: string) => void;
   onChangeMeshGlobal: (m: number) => void;
   onChangeMeshHole: (m: number) => void;
+  onChangeBypassLoad?: (val: number) => void;
   onChangePDM?: (enable: boolean) => void;
   onChangeCriterion?: (c: string) => void;
 }
 
 export const GeometryEditor: React.FC<Props> = ({
-  width, height, holes, constraintType, meshGlobal, meshHole,
+  width, height, holes, constraintType, meshGlobal, meshHole, bypassLoad = 0,
   enablePDM = false, failureCriterion = 'Hashin',
   onChangeWidth, onChangeHeight, onChangeHoles, onChangeConstraint,
-  onChangeMeshGlobal, onChangeMeshHole, onChangePDM, onChangeCriterion
+  onChangeMeshGlobal, onChangeMeshHole, onChangeBypassLoad, onChangePDM, onChangeCriterion
 }) => {
   const addHole = () => {
     onChangeHoles([
@@ -129,26 +131,40 @@ export const GeometryEditor: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* Mesh Yoğunluğu */}
-      <div className="form-group">
-        <label className="form-label">Mesh Yoğunluğu (Global / Delik - mm)</label>
-        <div style={{ display: 'flex', gap: '6px' }}>
-          <input
-            type="number" className="form-input" style={{ width: '50%' }}
-            value={Number.isNaN(meshGlobal) ? '' : meshGlobal}
-            onFocus={(e) => e.target.select()}
-            onChange={(e) => onChangeMeshGlobal(parseVal(e.target.value, 4.0))}
-            title="Genel Plaka Mesh Boyutu (mm)"
-          />
-          <input
-            type="number" className="form-input" style={{ width: '50%' }}
-            value={Number.isNaN(meshHole) ? '' : meshHole}
-            onFocus={(e) => e.target.select()}
-            onChange={(e) => onChangeMeshHole(parseVal(e.target.value, 0.5))}
-            title="Delik Çevresi Radyal Mesh Boyutu (mm)"
-          />
+      {/* Mesh Yoğunluğu & Bypass Yükü */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+        <div className="form-group">
+          <label className="form-label">Mesh Yoğunluğu (Global / Delik - mm)</label>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <input
+              type="number" className="form-input" style={{ width: '50%' }}
+              value={Number.isNaN(meshGlobal) ? '' : meshGlobal}
+              onFocus={(e) => e.target.select()}
+              onChange={(e) => onChangeMeshGlobal(parseVal(e.target.value, 4.0))}
+              title="Genel Plaka Mesh Boyutu (mm)"
+            />
+            <input
+              type="number" className="form-input" style={{ width: '50%' }}
+              value={Number.isNaN(meshHole) ? '' : meshHole}
+              onFocus={(e) => e.target.select()}
+              onChange={(e) => onChangeMeshHole(parseVal(e.target.value, 0.5))}
+              title="Delik Çevresi Radyal Mesh Boyutu (mm)"
+            />
+          </div>
+          <span className="param-description">Soldaki: Genel mesh | Sağdaki: Delik radyal mesh</span>
         </div>
-        <span className="param-description">Soldaki: Genel plaka mesh boyutu | Sağdaki: Delik çevresi sıklaştırma boyutu</span>
+
+        <div className="form-group">
+          <label className="form-label">Uzak Alan Bypass Yükü (P_bypass - N)</label>
+          <input
+            type="number" className="form-input"
+            value={Number.isNaN(bypassLoad) ? '' : bypassLoad}
+            onFocus={(e) => e.target.select()}
+            onChange={(e) => onChangeBypassLoad && onChangeBypassLoad(parseVal(e.target.value, 0))}
+            title="Deliğin yanından geçen net kesit uzak alan çekme/basma yükü (Newton)"
+          />
+          <span className="param-description">Deliğin yanından geçen uzak alan gerilme yükü</span>
+        </div>
       </div>
 
       {/* Delik Matrisi Tablosu */}

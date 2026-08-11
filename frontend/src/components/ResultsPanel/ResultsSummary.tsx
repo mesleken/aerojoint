@@ -20,7 +20,14 @@ export const ResultsSummary: React.FC<Props> = ({ results }) => {
   else if (mos < 0.5) gaugeColor = 'var(--accent-amber)';
 
   return (
-    <div className="glass-panel" style={{ padding: '14px' }}>
+    <div className="glass-panel" style={{ padding: '14px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      {/* Termal Artık Gerilme Uyarısı (Priority 2) */}
+      {results.thermal_fail && (
+        <div style={{ padding: '8px 12px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.4)', borderRadius: '6px', color: '#f87171', fontSize: '0.8rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span>⚠ TERMAL ARTIK GERİLME KRİTİK: Katman kür/soğuma sonrası termal gerilmeleri dış yük binmeden sınır değerleri aşmıştır.</span>
+        </div>
+      )}
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', alignItems: 'center' }}>
         
         {/* Status Box */}
@@ -66,16 +73,31 @@ export const ResultsSummary: React.FC<Props> = ({ results }) => {
 
         {/* Performance & Mesh */}
         <div style={{ background: 'var(--bg-input)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-color)', height: '100%' }}>
-          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>SİMÜLASYON SÜRESİ</div>
-          <div style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--accent-cyan)', display: 'flex', alignItems: 'center', gap: '4px', fontFamily: 'var(--font-mono)' }}>
-            <Cpu size={16} /> {results.computation_time_ms.toFixed(1)} ms
+          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>SİMÜLASYON & YÜK ORANI</div>
+          <div style={{ fontSize: '1.0rem', fontWeight: 600, color: 'var(--accent-cyan)', display: 'flex', alignItems: 'center', gap: '4px', fontFamily: 'var(--font-mono)' }}>
+            <Cpu size={14} /> {results.computation_time_ms.toFixed(1)} ms
+          </div>
+          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+            Bearing/Bypass Oranı β: <b>{((results.bearing_bypass_ratio || 1.0) * 100).toFixed(0)}%</b>
           </div>
           <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-            {results.mesh_summary.n_elements} Eleman | {results.mesh_summary.n_nodes} Düğüm
+            {results.mesh_summary.n_elements} Q4 Eleman | {results.mesh_summary.n_nodes} Düğüm
           </div>
         </div>
 
       </div>
+
+      {/* Methodology Assumptions Section (Priority 6) */}
+      {results.assumptions && results.assumptions.length > 0 && (
+        <div style={{ background: 'rgba(0, 0, 0, 0.2)', padding: '10px 12px', borderRadius: '6px', border: '1px solid rgba(255, 255, 255, 0.08)', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+          <div style={{ fontWeight: 600, color: 'var(--accent-amber)', marginBottom: '4px' }}>📋 Metodoloji Şeffaflığı & Aktif Varsayımlar:</div>
+          <ul style={{ paddingLeft: '16px', margin: 0 }}>
+            {results.assumptions.map((asm, idx) => (
+              <li key={idx}>{asm}</li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 };

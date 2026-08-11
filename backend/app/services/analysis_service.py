@@ -159,35 +159,49 @@ class AnalysisService:
         critical_angle = 0.0
         critical_mode = "None"
         governing_criterion = selected_criterion
+        overall_thermal_fail = False
+        all_assumptions = set()
 
         for ply_idx, ply in enumerate(laminate.plies):
+            # 1. Ortalanmış Gerilmeler (Görselleştirme için)
             ply_stresses_local = fem_result.ply_stresses[ply_idx]['nodal_stresses_local']
+            # 2. Ortalanmamış Eleman Köşe Gerilmeleri (Konservatif Kırılma Değerlendirmesi için)
+            elem_corner_local = fem_result.ply_stresses[ply_idx]['elem_corner_stresses_local']
             
-            # Bu katmandaki termal stres (lokal eksenlerde, orta düzlemde) - nodal koordinatlardan bağımsız sabittir
+            # Bu katmandaki termal stres (lokal eksenlerde, orta düzlemde)
             sigma_therm = thermal_ply_results[ply_idx]['positions']['middle']['sigma_local']
             
-            # En kritik düğümü bul
+            # En kritik eleman köşesini/düğümünü bul (KONSARVATİF HAM GERİLME İLE)
             max_fi_ply = 0.0
             crit_eval = None
 
-            for n_idx, stress_vec in enumerate(ply_stresses_local):
-                if not valid_nodes[n_idx]:
-                    continue
+            n_elems = len(elem_corner_local)
+            for e_idx in range(n_elems):
+                elem_nodes = mesh_data.elements[e_idx]
+                for c_idx in range(4):
+                    ni = elem_nodes[c_idx]
+                    if not valid_nodes[ni]:
+                        continue
                     
-                sigma_mech = [stress_vec[0], stress_vec[1], stress_vec[2]]
-                eval_res = self.failure_engine.evaluate_ply(sigma_mech, sigma_therm, ply.material, ply_idx, ply.angle)
-                
-                # Seçilen kritere göre o düğümdeki FI değerini al
-                current_fi = eval_res.hashin_max_fi if selected_criterion == 'Hashin' else eval_res.tsai_wu_fi
-                
-                if current_fi >= max_fi_ply:
-                    max_fi_ply = current_fi
-                    crit_eval = eval_res
+                    stress_vec = elem_corner_local[e_idx, c_idx]
+                    sigma_mech = [stress_vec[0], stress_vec[1], stress_vec[2]]
+                    eval_res = self.failure_engine.evaluate_ply(sigma_mech, sigma_therm, ply.material, ply_idx, ply.angle)
+                    
+                    current_fi = eval_res.hashin_max_fi if selected_criterion == 'Hashin' else eval_res.tsai_wu_fi
+                    
+                    if current_fi >= max_fi_ply:
+                        max_fi_ply = current_fi
+                        crit_eval = eval_res
 
             if crit_eval is None:
                 crit_eval = self.failure_engine.evaluate_ply([0,0,0], sigma_therm, ply.material, ply_idx, ply.angle)
 
-            # İlgili katmanın raporunu oluştururken de seçilen kriteri baz al
+            if crit_eval.thermal_fail:
+                overall_thermal_fail = True
+
+            for asm in crit_eval.assumptions:
+                all_assumptions.add(asm)
+
             selected_mos = crit_eval.mos_hashin if selected_criterion == 'Hashin' else crit_eval.mos_tsai_wu
 
             ply_results.append({
@@ -196,8 +210,9 @@ class AnalysisService:
                 'hashin_max_fi': float(crit_eval.hashin_max_fi),
                 'dominant_mode': crit_eval.hashin_failure_mode if selected_criterion == 'Hashin' else "Tsai-Wu Interacted",
                 'tsai_wu_fi': float(crit_eval.tsai_wu_fi),
-                'mos_hashin': float(selected_mos), # Arayüz 'mos_hashin' değişkenini okuyor olabilir, içine seçileni koyalım
-                'is_failed': bool(selected_mos < 0.0)
+                'mos_hashin': float(selected_mos),
+                'thermal_fail': bool(crit_eval.thermal_fail),
+                'is_failed': bool(selected_mos < 0.0 or crit_eval.thermal_fail)
             })
 
             if selected_mos < min_mos:
@@ -233,7 +248,16 @@ class AnalysisService:
                 if fi > nodal_hashin_fi[n_idx]:
                     nodal_hashin_fi[n_idx] = fi
 
-        overall_status = "PASS" if min_mos >= 0.0 else "FAIL"
+        # Bearing/Bypass Yük Oranı β
+        bypass_load = float(request_data.get('bypass_load', 0.0))
+        bearing_bypass_ratio = total_applied_load / (total_applied_load + bypass_load) if (total_applied_load + bypass_load) > 0 else 1.0
+
+        # Mesh Yakınsama ve Hassasiyet Kontrolü
+        max_nodal_stress = np.max(fem_result.nodal_stresses) if len(fem_result.nodal_stresses) > 0 else 1.0
+        max_elem_corner = np.max(fem_result.element_corner_stresses) if len(fem_result.element_corner_stresses) > 0 else 1.0
+        smoothing_effect_pct = max(0.0, float((max_elem_corner - max_nodal_stress) / max_elem_corner * 100.0)) if max_elem_corner > 0 else 0.0
+
+        overall_status = "PASS" if (min_mos >= 0.0 and not overall_thermal_fail) else "FAIL"
         t_end = time.perf_counter()
 
         res_dict = {
@@ -241,6 +265,7 @@ class AnalysisService:
             'total_thickness': float(laminate.total_thickness),
             'min_mos': float(min_mos) if min_mos != float('inf') else 999.0,
             'overall_status': overall_status,
+            'thermal_fail': overall_thermal_fail,
             'governing_criterion': governing_criterion,
             'critical_ply': critical_ply_id,
             'critical_angle': critical_angle,
@@ -251,6 +276,10 @@ class AnalysisService:
             'D_matrix': D.tolist(),
             'B_nonzero': B_nonzero,
             'applied_load': total_applied_load,
+            'bypass_load': bypass_load,
+            'bearing_bypass_ratio': float(bearing_bypass_ratio),
+            'mesh_smoothing_smoothing_effect_pct': float(smoothing_effect_pct),
+            'assumptions': list(all_assumptions),
             'computation_time_ms': (t_end - t_start) * 1000.0,
             'mesh_summary': mesh_stats,
             'nodes': mesh_data.nodes.tolist() if hasattr(mesh_data.nodes, 'tolist') else mesh_data.nodes,

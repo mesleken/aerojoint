@@ -26,11 +26,12 @@ export const App: React.FC = () => {
     meshHole, setMeshHole,
     enablePDM, setEnablePDM,
     failureCriterion, setFailureCriterion,
+    bypassLoad, setBypassLoad,
     results, setResults,
     loading, setLoading,
     error, setError,
     stressComponent, setStressComponent,
-    applyCadData, resetToDefaults
+    applyCadData, resetToDefaults, getValidationErrors
   } = useAnalysisStore();
 
   const loadMaterialList = () => {
@@ -44,9 +45,15 @@ export const App: React.FC = () => {
   }, []);
 
   const handleRunAnalysis = async () => {
+    const validationErrors = getValidationErrors();
+    if (validationErrors.length > 0) {
+      toast.error(`Analiz Başlatılamadı: ${validationErrors[0]}`);
+      return;
+    }
+
     setLoading(true);
     setError(null);
-    const toastId = toast.loading('Sonlu Elemanlar (FEM) ve Hashin Matrisi Hesaplanıyor...');
+    const toastId = toast.loading('Sonlu Elemanlar (FEM) Çözümü & Katman Kırılma Hesabı Yapılıyor...');
     try {
       const res = await runAnalysis({
         width,
@@ -57,9 +64,26 @@ export const App: React.FC = () => {
         mesh_size_global: meshGlobal,
         mesh_size_hole: meshHole,
         enable_pdm: enablePDM,
-        failure_criterion: failureCriterion as any
+        failure_criterion: failureCriterion as any,
+        bypass_load: bypassLoad
       });
       setResults(res);
+
+      // Audit Record için tarihli izlenme kaydı ekle
+      useAnalysisStore.getState().addAuditRecord({
+        id: `run_${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        engineVersion: 'v4.0-beta',
+        layupNotation: res.layup_notation,
+        width,
+        height,
+        appliedLoad: res.applied_load,
+        minMos: res.min_mos,
+        overallStatus: res.overall_status,
+        governingCriterion: res.governing_criterion,
+        results: res
+      });
+
       toast.success(`Analiz Başarıyla Tamamlandı! (Eleman Sayısı: ${res.elements.length})`, { id: toastId });
     } catch (err: any) {
       const msg = err.message || 'Analiz sırasında beklenmeyen bir hata oluştu';
@@ -76,7 +100,8 @@ export const App: React.FC = () => {
       const blob = await downloadPdfReport({
         width, height, plies, holes, constraint_type: constraintType,
         mesh_size_global: meshGlobal, mesh_size_hole: meshHole,
-        enable_pdm: enablePDM, failure_criterion: failureCriterion as any
+        enable_pdm: enablePDM, failure_criterion: failureCriterion as any,
+        bypass_load: bypassLoad
       });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -91,6 +116,11 @@ export const App: React.FC = () => {
     }
   };
 
+  const validationErrors = getValidationErrors();
+  const isHistoryModalOpen = useAnalysisStore(state => state.isHistoryModalOpen);
+  const setIsHistoryModalOpen = useAnalysisStore(state => state.setIsHistoryModalOpen);
+  const analysisHistory = useAnalysisStore(state => state.analysisHistory);
+
   return (
     <div className="app-container">
       <Toaster position="top-right" toastOptions={{ duration: 4000, style: { background: '#0f172a', color: '#f8fafc', border: '1px solid #334155' } }} />
@@ -100,6 +130,7 @@ export const App: React.FC = () => {
         loading={loading}
         onOpenMaterialManager={() => setIsMaterialModalOpen(true)}
         onOpenCadStudio={() => setIsCadModalOpen(true)}
+        onOpenHistory={() => setIsHistoryModalOpen(true)}
         onExportPdf={handleExportPdf}
       />
 
@@ -119,7 +150,52 @@ export const App: React.FC = () => {
         }}
       />
 
+      {/* History Audit Modal */}
+      {isHistoryModalOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div className="glass-panel" style={{ width: '650px', maxHeight: '80vh', display: 'flex', flexDirection: 'column', padding: '20px', gap: '16px', background: '#0f172a' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
+              <h3 style={{ margin: 0, color: 'var(--text-main)', fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                📜 Analiz Geçmişi & İzlenebilirlik Kayıtları (Audit Trail)
+              </h3>
+              <button className="btn btn-secondary" style={{ padding: '2px 8px' }} onClick={() => setIsHistoryModalOpen(false)}>✕</button>
+            </div>
+            
+            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {analysisHistory.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '30px', color: 'var(--text-muted)' }}>Henüz kaydedilmiş bir analiz geçmişi yok.</div>
+              ) : (
+                analysisHistory.map((rec) => (
+                  <div key={rec.id} style={{ background: 'var(--bg-input)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: '0.85rem', color: '#38bdf8' }}>{rec.layupNotation} ({rec.width}x{rec.height} mm)</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Saat: <b>{rec.timestamp}</b> | Yük: <b>{rec.appliedLoad} N</b> | Çözücü: <b>{rec.engineVersion}</b></div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <span style={{ fontWeight: 700, fontSize: '0.85rem', color: rec.overallStatus === 'PASS' ? '#4ade80' : '#f87171' }}>
+                        MoS: {rec.minMos > 99 ? '∞' : rec.minMos.toFixed(2)} [{rec.overallStatus}]
+                      </span>
+                      <button className="btn btn-secondary" style={{ padding: '3px 8px', fontSize: '0.75rem' }} onClick={() => { setResults(rec.results); setIsHistoryModalOpen(false); toast.success('Geçmiş Analiz Yüklendi!'); }}>Yükle</button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <main className="dashboard-content">
+        {/* Validation Errors Banner */}
+        {validationErrors.length > 0 && (
+          <div style={{ background: 'rgba(245, 158, 11, 0.15)', border: '1px solid rgba(245, 158, 11, 0.4)', color: '#fbbf24', padding: '8px 16px', borderRadius: '8px', marginBottom: '12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <AlertCircle size={16} />
+            <div>
+              <b>Aşamalı Doğrulama Uyarısı:</b> {validationErrors.join(' | ')}
+            </div>
+          </div>
+        )}
+
         {/* 3-Column Engineering Layout */}
         <div className="workstation-layout">
           
@@ -151,6 +227,7 @@ export const App: React.FC = () => {
               constraintType={constraintType}
               meshGlobal={meshGlobal}
               meshHole={meshHole}
+              bypassLoad={bypassLoad}
               enablePDM={enablePDM}
               failureCriterion={failureCriterion}
               onChangeWidth={setWidth}
@@ -159,6 +236,7 @@ export const App: React.FC = () => {
               onChangeConstraint={setConstraintType}
               onChangeMeshGlobal={setMeshGlobal}
               onChangeMeshHole={setMeshHole}
+              onChangeBypassLoad={setBypassLoad}
               onChangePDM={setEnablePDM}
               onChangeCriterion={setFailureCriterion}
             />

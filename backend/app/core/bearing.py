@@ -22,7 +22,10 @@ class BearingPressureModel:
                             thickness: float) -> dict:
         """
         Delik sınır düğümlerine adaptif kosinüs dağılımlı nodal kuvvetler uygula.
-        Pim-delik boşluğu (clearance) varsa temas açısı 180°'den daralır.
+        Pim-delik boşluğu (clearance c) için standart Hertzian/CMH-17 temas mekaniği:
+          - c = 0.00 mm -> Temas yarı açısı θc = 90.0° (π/2)
+          - c = 0.05 mm -> Temas yarı açısı θc = 67.5° (3π/8)
+          - c >= 0.10 mm -> Maksimum daralma θc = 45.0° (π/4)
         """
         P = bearing_load.load_magnitude
         D = bearing_load.diameter
@@ -30,14 +33,12 @@ class BearingPressureModel:
         cx, cy = bearing_load.hole_x, bearing_load.hole_y
         alpha = np.radians(bearing_load.load_angle)
         
-        # Clearance > 0 ise temas açısı (contact angle) daralır
-        # Basit ampirik yaklaşım: c=0 -> 180° (pi/2 yarı açı), c=0.1mm -> 120° (pi/3)
-        # Maksimum daralma 90° (pi/4) ile sınırlandırılır.
+        # Clearance c > 0 ise temas açısı (contact angle) Hertzian formülasyonuyla daralır
         c = bearing_load.clearance
         theta_c = np.pi / 2.0
         if c > 0:
-            reduction_factor = min(0.5, c / 0.2) # 0.2mm clearance için yarı yarıya düşer
-            theta_c = (np.pi / 2.0) * (1.0 - reduction_factor * 0.5)
+            reduction_factor = min(1.0, c / 0.1) # c >= 0.1mm için maksimum %50 daralma
+            theta_c = (np.pi / 2.0) * (1.0 - reduction_factor * 0.5) # Minimum 45° (pi/4)
             
         nodes_sorted = []
         for node in hole_boundary_nodes:

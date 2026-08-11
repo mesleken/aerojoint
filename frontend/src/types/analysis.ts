@@ -27,6 +27,7 @@ export interface AnalysisRequest {
   constraint_type: string;
   mesh_size_global: number;
   mesh_size_hole: number;
+  bypass_load?: number; // Uzak alan bypass yükü (N)
   enable_pdm?: boolean; // Progressive Damage Modeling
   failure_criterion?: 'Hashin' | 'Tsai-Wu' | 'Puck';
   load_cases?: LoadCase[];
@@ -40,6 +41,7 @@ export interface PlyResult {
   tsai_wu_fi: number;
   mos_hashin: number;
   is_failed: boolean;
+  thermal_fail?: boolean;
 }
 
 export interface PDMStep {
@@ -64,6 +66,7 @@ export interface AnalysisResponse {
   total_thickness: number;
   min_mos: number;
   overall_status: 'PASS' | 'FAIL';
+  thermal_fail?: boolean;
   governing_criterion: string;
   critical_ply: number;
   critical_angle: number;
@@ -74,6 +77,10 @@ export interface AnalysisResponse {
   D_matrix: number[][];
   B_nonzero: boolean;
   applied_load: number;
+  bypass_load?: number;
+  bearing_bypass_ratio?: number;
+  mesh_smoothing_smoothing_effect_pct?: number;
+  assumptions?: string[];
   computation_time_ms: number;
   mesh_summary: {
     n_nodes: number;
