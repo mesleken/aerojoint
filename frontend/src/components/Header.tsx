@@ -5,21 +5,32 @@ interface Props {
   onRunAnalysis: () => void;
   loading: boolean;
   onOpenMaterialManager?: () => void;
+  onOpenCadStudio?: () => void;
   onExportPdf?: () => void;
 }
 
-export const Header: React.FC<Props> = ({ onRunAnalysis, loading, onOpenMaterialManager, onExportPdf }) => {
+export const Header: React.FC<Props> = ({ onRunAnalysis, loading, onOpenMaterialManager, onOpenCadStudio, onExportPdf }) => {
   return (
     <header className="header">
       <div className="logo-group">
         <Plane className="w-6 h-6 text-blue-500" style={{ color: '#3b82f6' }} />
         <span className="logo-title">AeroJoint</span>
-        <span style={{ fontSize: '0.75rem', color: '#64748b', marginLeft: '8px' }}>
-          v2.0 (MIL-HDBK-17 Uyumlu)
+        <span style={{ fontSize: '0.75rem', color: '#38bdf8', marginLeft: '8px', fontWeight: 600 }}>
+          v3.0 (3B CAD & PDM)
         </span>
       </div>
 
       <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+        {onOpenCadStudio && (
+          <button
+            className="btn btn-secondary"
+            onClick={onOpenCadStudio}
+            style={{ background: '#0284c7', color: '#ffffff', borderColor: '#38bdf8' }}
+            title="3B CAD & FEM Yük Entegrasyon Stüdyosu"
+          >
+            <Database size={16} /> 3B CAD Stüdyosu
+          </button>
+        )}
         {onOpenMaterialManager && (
           <button
             className="btn btn-secondary"

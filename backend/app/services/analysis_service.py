@@ -100,7 +100,8 @@ class AnalysisService:
                     hole_y=float(hole_in['y']),
                     diameter=diameter,
                     load_magnitude=eff_load,
-                    load_angle=float(hole_in.get('load_angle', 0.0))
+                    load_angle=float(hole_in.get('load_angle', 0.0)),
+                    clearance=float(hole_in.get('clearance', 0.0))
                 )
                 h_nodes = mesh_data.hole_boundary_nodes[h_idx].get('nodes', [])
                 if h_nodes:
@@ -220,6 +221,18 @@ class AnalysisService:
                 num_steps=20
             )
 
+        # Düğüm bazlı maksimum Hashin FI (Failure Index) dizisi oluştur (Görsel Kontur için)
+        nodal_hashin_fi = np.zeros(len(mesh_data.nodes))
+        for ply_idx, ply in enumerate(laminate.plies):
+            ply_stresses_local = fem_result.ply_stresses[ply_idx]['nodal_stresses_local']
+            sigma_therm = thermal_ply_results[ply_idx]['positions']['middle']['sigma_local']
+            for n_idx, stress_vec in enumerate(ply_stresses_local):
+                sigma_mech = [stress_vec[0], stress_vec[1], stress_vec[2]]
+                eval_res = self.failure_engine.evaluate_ply(sigma_mech, sigma_therm, ply.material, ply_idx, ply.angle)
+                fi = float(eval_res.hashin_max_fi)
+                if fi > nodal_hashin_fi[n_idx]:
+                    nodal_hashin_fi[n_idx] = fi
+
         overall_status = "PASS" if min_mos >= 0.0 else "FAIL"
         t_end = time.perf_counter()
 
@@ -242,7 +255,8 @@ class AnalysisService:
             'mesh_summary': mesh_stats,
             'nodes': mesh_data.nodes.tolist() if hasattr(mesh_data.nodes, 'tolist') else mesh_data.nodes,
             'elements': mesh_data.elements.tolist() if hasattr(mesh_data.elements, 'tolist') else mesh_data.elements,
-            'nodal_stresses': fem_result.nodal_stresses.tolist()
+            'nodal_stresses': fem_result.nodal_stresses.tolist(),
+            'nodal_hashin_fi': nodal_hashin_fi.tolist()
         }
 
         if pdm_results:

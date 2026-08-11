@@ -94,6 +94,11 @@ class ProgressiveDamageSolver:
                     K_ff = K_global[np.ix_(free_dofs, free_dofs)]
                     F_f = F[free_dofs]
                     u_free = spsolve(K_ff, F_f)
+                    
+                    # Fiziksel kopma / singüler matris tespiti (Deformasyon > 50 mm ise yapı kopmuştur)
+                    if np.max(np.abs(u_free)) > 50.0:
+                        is_ultimate_failed = True
+                        break
                 except Exception:
                     # Matris singüler olduysa yapı çökmüştür (Ultimate failure)
                     is_ultimate_failed = True
@@ -187,7 +192,11 @@ class ProgressiveDamageSolver:
             matrix_failed_count = int(np.sum(damage_state[:, :, 0]))
             fiber_failed_count = int(np.sum(damage_state[:, :, 1]))
 
-            if fiber_failed_count > (n_elements * n_plies * 0.5):
+            # Lokal Hasar Kriteri: Bir çatlak hattı oluşumu (yaklaşık sqrt(N) mertebesinde fiber kopması)
+            # Yırtılma veya net-tension koptuğunda tüm levhanın değil, belirli bir kesitin kopması yeterlidir.
+            critical_fiber_count = n_plies * max(4, int(np.sqrt(n_elements) * 0.5))
+            
+            if fiber_failed_count > critical_fiber_count:
                 is_ultimate_failed = True
 
             history.append(PDMStepResult(

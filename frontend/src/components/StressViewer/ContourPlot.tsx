@@ -9,8 +9,9 @@ interface Props {
   stressFrames?: number[][][]; // Multi-step PDM frames
   width: number;
   height: number;
-  selectedComponent?: 'sigma_x' | 'sigma_y' | 'tau_xy' | 'von_mises';
+  selectedComponent?: 'sigma_x' | 'sigma_y' | 'tau_xy' | 'von_mises' | 'hashin_fi';
   holes?: Array<{ x: number; y: number; diameter: number }>;
+  nodalHashinFi?: number[];
 }
 
 // Mühendislik CAD Standartlarında Dinamik "Nice Step" Adım Hesaplama Algoritması
@@ -34,7 +35,8 @@ export const ContourPlot: React.FC<Props> = ({
   width,
   height,
   selectedComponent = 'von_mises',
-  holes = []
+  holes = [],
+  nodalHashinFi
 }) => {
   const [viewMode, setViewMode] = useState<'fit' | 'critical'>('critical');
   const [showMesh, setShowMesh] = useState<boolean>(false);
@@ -48,6 +50,13 @@ export const ContourPlot: React.FC<Props> = ({
   }, [stresses, stressFrames, activeFrameIndex]);
 
   const intensity = useMemo(() => {
+    if (selectedComponent === 'hashin_fi') {
+      if (nodalHashinFi && nodalHashinFi.length === nodes.length) {
+        return nodalHashinFi;
+      }
+      return new Array(nodes.length).fill(0);
+    }
+
     if (!activeStresses || activeStresses.length === 0) {
       return new Array(nodes.length).fill(0);
     }
@@ -59,7 +68,7 @@ export const ContourPlot: React.FC<Props> = ({
       if (selectedComponent === 'tau_xy') return txy;
       return Math.sqrt(Math.max(0, sx * sx - sx * sy + sy * sy + 3 * txy * txy));
     });
-  }, [activeStresses, nodes.length, selectedComponent]);
+  }, [activeStresses, nodes.length, selectedComponent, nodalHashinFi]);
 
   // En yüksek gerilmeye sahip kritik düğümü bul (Stress Concentration Peak)
   const criticalPoint = useMemo(() => {
@@ -277,7 +286,7 @@ export const ContourPlot: React.FC<Props> = ({
       intensity,
       colorscale: 'Jet',
       colorbar: {
-        title: { text: selectedComponent.toUpperCase() + ' (MPa)', font: { color: '#38bdf8', size: 12 }, side: 'top' },
+        title: { text: selectedComponent === 'hashin_fi' ? 'HASHIN FI' : selectedComponent.toUpperCase() + ' (MPa)', font: { color: '#38bdf8', size: 12 }, side: 'top' },
         tickfont: { color: '#94a3b8', size: 11 },
         len: 0.85,
         x: 1.05,

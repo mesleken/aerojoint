@@ -144,14 +144,32 @@ class FEMSolver:
         return stresses
     
     def _extrapolate_to_nodes(self, mesh, element_stresses):
+        """
+        Gauss noktalarında (±1/√3) hesaplanan gerilmeleri bilineer Q4 Ekstrapolasyon 
+        matrisi ile düğümlere (±1) ekstrapole eder ve komşu elemanlar arasında ortalamasını alır.
+        """
         n_nodes = len(mesh.nodes)
         nodal_sum = np.zeros((n_nodes, 3))
         nodal_count = np.zeros(n_nodes)
+        
+        # 4 Gauss noktasından (4x3) 4 Düğüme (4x3) Ekstrapolasyon Matrisi (E_extrap)
+        s3_2 = np.sqrt(3.0) / 2.0
+        E_extrap = np.array([
+            [1.0 + s3_2, -0.5, 1.0 - s3_2, -0.5],
+            [-0.5, 1.0 + s3_2, -0.5, 1.0 - s3_2],
+            [1.0 - s3_2, -0.5, 1.0 + s3_2, -0.5],
+            [-0.5, 1.0 - s3_2, -0.5, 1.0 + s3_2]
+        ])
+
         for elem_idx, elem_nodes in enumerate(mesh.elements):
-            elem_avg = np.mean(element_stresses[elem_idx], axis=0)
-            for ni in elem_nodes:
-                nodal_sum[ni] += elem_avg
+            gauss_stresses = np.array(element_stresses[elem_idx]) # (4, 3)
+            # Gauss noktalarından düğümlere ekstrapolasyon
+            node_stresses_elem = E_extrap @ gauss_stresses # (4, 3)
+            
+            for local_idx, ni in enumerate(elem_nodes):
+                nodal_sum[ni] += node_stresses_elem[local_idx]
                 nodal_count[ni] += 1
+                
         nodal_count[nodal_count == 0] = 1
         return nodal_sum / nodal_count[:, np.newaxis]
     

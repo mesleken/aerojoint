@@ -12,29 +12,17 @@ class BearingLoad:
     diameter: float
     load_magnitude: float
     load_angle: float  # derece, x-ekseni pozitif yönden
+    clearance: float = 0.0  # mm, pim-delik boşluğu (tolerans)
 
 
 class BearingPressureModel:
-    
-    @staticmethod
-    def compute_peak_pressure(load: float, diameter: float, 
-                               thickness: float) -> float:
-        """p₀ = 4P / (π·D·t)"""
-        return (4.0 * load) / (np.pi * diameter * thickness)
-    
-    @staticmethod
-    def compute_average_bearing_stress(load: float, diameter: float,
-                                        thickness: float) -> float:
-        """σ_br = P / (D·t)"""
-        return load / (diameter * thickness)
     
     def apply_bearing_loads(self, bearing_load: BearingLoad,
                             hole_boundary_nodes: list[dict],
                             thickness: float) -> dict:
         """
-        Delik sınır düğümlerine kosinüs dağılımlı nodal kuvvetler uygula.
-        
-        Returns: {'node_id': (Fx, Fy), ...}
+        Delik sınır düğümlerine adaptif kosinüs dağılımlı nodal kuvvetler uygula.
+        Pim-delik boşluğu (clearance) varsa temas açısı 180°'den daralır.
         """
         P = bearing_load.load_magnitude
         D = bearing_load.diameter
@@ -42,9 +30,15 @@ class BearingPressureModel:
         cx, cy = bearing_load.hole_x, bearing_load.hole_y
         alpha = np.radians(bearing_load.load_angle)
         
-        p0 = self.compute_peak_pressure(P, D, thickness)
-        
-        # Düğümlerin açısal pozisyonlarını hesapla
+        # Clearance > 0 ise temas açısı (contact angle) daralır
+        # Basit ampirik yaklaşım: c=0 -> 180° (pi/2 yarı açı), c=0.1mm -> 120° (pi/3)
+        # Maksimum daralma 90° (pi/4) ile sınırlandırılır.
+        c = bearing_load.clearance
+        theta_c = np.pi / 2.0
+        if c > 0:
+            reduction_factor = min(0.5, c / 0.2) # 0.2mm clearance için yarı yarıya düşer
+            theta_c = (np.pi / 2.0) * (1.0 - reduction_factor * 0.5)
+            
         nodes_sorted = []
         for node in hole_boundary_nodes:
             dx = node['x'] - cx
@@ -58,16 +52,17 @@ class BearingPressureModel:
         
         nodes_sorted.sort(key=lambda n: n['phi'])
         n_nodes = len(nodes_sorted)
-        nodal_forces = {}
+        
+        rel_forces = {}
+        total_F_bearing = 0.0
         
         for i, node in enumerate(nodes_sorted):
             theta = node['theta']
             
-            if abs(theta) > np.pi / 2:
-                nodal_forces[node['id']] = (0.0, 0.0)
+            if abs(theta) > theta_c:
+                rel_forces[node['id']] = (0.0, 0.0)
                 continue
             
-            # Tributary arc length
             i_prev = (i - 1) % n_nodes
             i_next = (i + 1) % n_nodes
             
@@ -81,13 +76,24 @@ class BearingPressureModel:
             
             delta_arc = R * (abs(dphi_prev) + abs(dphi_next)) / 2.0
             
-            pressure = p0 * np.cos(theta)
-            Fr = pressure * thickness * delta_arc
+            # Adaptif kosinüs formu: cos( (pi/2) * (theta / theta_c) )
+            pressure_rel = np.cos((np.pi / 2.0) * (theta / theta_c))
+            Fr_rel = pressure_rel * thickness * delta_arc
             
             phi = node['phi']
-            Fx = Fr * np.cos(phi)
-            Fy = Fr * np.sin(phi)
+            Fx_rel = Fr_rel * np.cos(phi)
+            Fy_rel = Fr_rel * np.sin(phi)
             
-            nodal_forces[node['id']] = (Fx, Fy)
+            rel_forces[node['id']] = (Fx_rel, Fy_rel)
+            
+            # Yük yönündeki taşıma kuvvetini topla
+            total_F_bearing += (Fx_rel * np.cos(alpha) + Fy_rel * np.sin(alpha))
+            
+        nodal_forces = {}
+        # Yük denkleştirme faktörü
+        scale_factor = P / total_F_bearing if total_F_bearing > 1e-9 else 0.0
         
+        for nid, (fx_r, fy_r) in rel_forces.items():
+            nodal_forces[nid] = (fx_r * scale_factor, fy_r * scale_factor)
+            
         return nodal_forces

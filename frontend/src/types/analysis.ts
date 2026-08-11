@@ -84,6 +84,7 @@ export interface AnalysisResponse {
   nodes: number[][];
   elements: number[][];
   nodal_stresses: number[][];
+  nodal_hashin_fi?: number[];
   pdm_results?: ProgressiveDamageResult;
   stress_frames?: number[][][]; // Multi-step animation stress states
   envelope_results?: any;

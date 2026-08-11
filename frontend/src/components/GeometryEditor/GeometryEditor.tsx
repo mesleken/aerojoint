@@ -137,14 +137,14 @@ export const GeometryEditor: React.FC<Props> = ({
             type="number" className="form-input" style={{ width: '50%' }}
             value={Number.isNaN(meshGlobal) ? '' : meshGlobal}
             onFocus={(e) => e.target.select()}
-            onChange={(e) => onChangeMeshGlobal(parseVal(e.target.value, 5))}
+            onChange={(e) => onChangeMeshGlobal(parseVal(e.target.value, 4.0))}
             title="Genel Plaka Mesh Boyutu (mm)"
           />
           <input
             type="number" className="form-input" style={{ width: '50%' }}
             value={Number.isNaN(meshHole) ? '' : meshHole}
             onFocus={(e) => e.target.select()}
-            onChange={(e) => onChangeMeshHole(parseVal(e.target.value, 1))}
+            onChange={(e) => onChangeMeshHole(parseVal(e.target.value, 0.5))}
             title="Delik Çevresi Radyal Mesh Boyutu (mm)"
           />
         </div>

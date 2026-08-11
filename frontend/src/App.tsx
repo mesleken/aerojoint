@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect } from 'react';
+import toast, { Toaster } from 'react-hot-toast';
 import { Header } from './components/Header';
 import { PlyStacker } from './components/PlyStacker/PlyStacker';
 import { GeometryEditor } from './components/GeometryEditor/GeometryEditor';
@@ -6,52 +7,36 @@ import { ContourPlot } from './components/StressViewer/ContourPlot';
 import { ResultsSummary } from './components/ResultsPanel/ResultsSummary';
 import { FailureTable } from './components/ResultsPanel/FailureTable';
 import { MaterialManagerModal } from './components/MaterialManager/MaterialManagerModal';
-import { PlyInput, HoleInput, AnalysisResponse, MaterialOption } from './types/analysis';
+import { CadStudioModal } from './components/CadStudio/CadStudioModal';
 import { fetchMaterials, runAnalysis, downloadPdfReport } from './api/analysisApi';
-import { Activity, AlertCircle, Play, ShieldCheck, Flame } from 'lucide-react';
+import { useAnalysisStore } from './store/useAnalysisStore';
+import { Activity, AlertCircle, Flame, RotateCcw } from 'lucide-react';
 
 export const App: React.FC = () => {
-  const [materials, setMaterials] = useState<MaterialOption[]>([]);
-  const [isMaterialModalOpen, setIsMaterialModalOpen] = useState<boolean>(false);
-
-  const [plies, setPlies] = useState<PlyInput[]>([
-    { material_id: 'T300_5208', angle: 0, thickness: 0.125 },
-    { material_id: 'T300_5208', angle: 45, thickness: 0.125 },
-    { material_id: 'T300_5208', angle: -45, thickness: 0.125 },
-    { material_id: 'T300_5208', angle: 90, thickness: 0.125 },
-    { material_id: 'T300_5208', angle: 0, thickness: 0.125 },
-    { material_id: 'T300_5208', angle: 45, thickness: 0.125 },
-    { material_id: 'T300_5208', angle: -45, thickness: 0.125 },
-    { material_id: 'T300_5208', angle: 90, thickness: 0.125 },
-    { material_id: 'T300_5208', angle: 90, thickness: 0.125 },
-    { material_id: 'T300_5208', angle: -45, thickness: 0.125 },
-    { material_id: 'T300_5208', angle: 45, thickness: 0.125 },
-    { material_id: 'T300_5208', angle: 0, thickness: 0.125 },
-    { material_id: 'T300_5208', angle: 90, thickness: 0.125 },
-    { material_id: 'T300_5208', angle: -45, thickness: 0.125 },
-    { material_id: 'T300_5208', angle: 45, thickness: 0.125 },
-    { material_id: 'T300_5208', angle: 0, thickness: 0.125 }
-  ]);
-
-  const [width, setWidth] = useState<number>(200);
-  const [height, setHeight] = useState<number>(100);
-  
-  const [holes, setHoles] = useState<HoleInput[]>([
-    { x: 60, y: 50, diameter: 6.35, load_magnitude: 1500, load_angle: 0, torque: 0 }
-  ]);
-  const [constraintType, setConstraintType] = useState<string>('fixed');
-  const [meshGlobal, setMeshGlobal] = useState<number>(6.0);
-  const [meshHole, setMeshHole] = useState<number>(1.2);
-  const [enablePDM, setEnablePDM] = useState<boolean>(false);
-  const [failureCriterion, setFailureCriterion] = useState<string>('Hashin');
-
-  const [results, setResults] = useState<AnalysisResponse | null>(null);
-  const [loading, setLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
-  const [stressComponent, setStressComponent] = useState<'sigma_x' | 'sigma_y' | 'tau_xy' | 'von_mises'>('von_mises');
+  const {
+    materials, setMaterials,
+    isMaterialModalOpen, setIsMaterialModalOpen,
+    isCadModalOpen, setIsCadModalOpen,
+    plies, setPlies,
+    width, setWidth,
+    height, setHeight,
+    holes, setHoles,
+    constraintType, setConstraintType,
+    meshGlobal, setMeshGlobal,
+    meshHole, setMeshHole,
+    enablePDM, setEnablePDM,
+    failureCriterion, setFailureCriterion,
+    results, setResults,
+    loading, setLoading,
+    error, setError,
+    stressComponent, setStressComponent,
+    applyCadData, resetToDefaults
+  } = useAnalysisStore();
 
   const loadMaterialList = () => {
-    fetchMaterials().then(setMaterials);
+    fetchMaterials().then(setMaterials).catch(() => {
+      toast.error('Malzeme veritabanı yüklenemedi!');
+    });
   };
 
   useEffect(() => {
@@ -61,6 +46,7 @@ export const App: React.FC = () => {
   const handleRunAnalysis = async () => {
     setLoading(true);
     setError(null);
+    const toastId = toast.loading('Sonlu Elemanlar (FEM) ve Hashin Matrisi Hesaplanıyor...');
     try {
       const res = await runAnalysis({
         width,
@@ -74,14 +60,18 @@ export const App: React.FC = () => {
         failure_criterion: failureCriterion as any
       });
       setResults(res);
+      toast.success(`Analiz Başarıyla Tamamlandı! (Eleman Sayısı: ${res.elements.length})`, { id: toastId });
     } catch (err: any) {
-      setError(err.message || 'Analiz sırasında beklenmeyen bir hata oluştu');
+      const msg = err.message || 'Analiz sırasında beklenmeyen bir hata oluştu';
+      setError(msg);
+      toast.error(msg, { id: toastId });
     } finally {
       setLoading(false);
     }
   };
 
   const handleExportPdf = async () => {
+    const toastId = toast.loading('Sertifikasyon Raporu (PDF) Üretiliyor...');
     try {
       const blob = await downloadPdfReport({
         width, height, plies, holes, constraint_type: constraintType,
@@ -95,17 +85,21 @@ export const App: React.FC = () => {
       document.body.appendChild(a);
       a.click();
       a.remove();
+      toast.success('Rapor İndirildi!', { id: toastId });
     } catch (err: any) {
-      alert(`PDF İndirilemedi: ${err.message}`);
+      toast.error(`PDF İndirilemedi: ${err.message}`, { id: toastId });
     }
   };
 
   return (
     <div className="app-container">
+      <Toaster position="top-right" toastOptions={{ duration: 4000, style: { background: '#0f172a', color: '#f8fafc', border: '1px solid #334155' } }} />
+
       <Header
         onRunAnalysis={handleRunAnalysis}
         loading={loading}
         onOpenMaterialManager={() => setIsMaterialModalOpen(true)}
+        onOpenCadStudio={() => setIsCadModalOpen(true)}
         onExportPdf={handleExportPdf}
       />
 
@@ -116,12 +110,35 @@ export const App: React.FC = () => {
         onRefreshMaterials={loadMaterialList}
       />
 
+      <CadStudioModal
+        isOpen={isCadModalOpen}
+        onClose={() => setIsCadModalOpen(false)}
+        onApplyToMainSolver={(params) => {
+          applyCadData(params);
+          toast.success(`CAD Verileri Aktarıldı: ${params.width || '?'}x${params.height || '?'} mm, ${params.holes.length} delik, ${params.plies?.length || 0} katman.`);
+        }}
+      />
+
       <main className="dashboard-content">
         {/* 3-Column Engineering Layout */}
         <div className="workstation-layout">
           
           {/* LEFT PANEL: Inputs */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto', paddingRight: '8px' }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '-8px' }}>
+              <button 
+                className="btn btn-secondary" 
+                style={{ fontSize: '0.75rem', padding: '4px 10px', color: 'var(--text-muted)' }}
+                onClick={() => {
+                  if (window.confirm('Tüm analizi varsayılan ayarlara sıfırlamak istediğinize emin misiniz?')) {
+                    resetToDefaults();
+                    toast.success('Analiz ayarları sıfırlandı.');
+                  }
+                }}
+              >
+                <RotateCcw size={12} style={{ marginRight: '4px' }} /> Analizi Sıfırla
+              </button>
+            </div>
             <PlyStacker 
               plies={plies}
               materials={materials}
@@ -168,6 +185,7 @@ export const App: React.FC = () => {
                 <Activity size={18} /> <b>FEM Gerilme Dağılımı</b>
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
+                <button className={`btn ${stressComponent === 'hashin_fi' ? 'btn-primary' : 'btn-secondary'}`} style={{ padding: '4px 10px', fontSize: '0.75rem', background: stressComponent === 'hashin_fi' ? '#0ea5e9' : undefined }} onClick={() => setStressComponent('hashin_fi')}>🔥 Hashin FI</button>
                 <button className={`btn ${stressComponent === 'von_mises' ? 'btn-primary' : 'btn-secondary'}`} style={{ padding: '4px 10px', fontSize: '0.75rem' }} onClick={() => setStressComponent('von_mises')}>Von Mises</button>
                 <button className={`btn ${stressComponent === 'sigma_x' ? 'btn-primary' : 'btn-secondary'}`} style={{ padding: '4px 10px', fontSize: '0.75rem' }} onClick={() => setStressComponent('sigma_x')}>σx</button>
                 <button className={`btn ${stressComponent === 'sigma_y' ? 'btn-primary' : 'btn-secondary'}`} style={{ padding: '4px 10px', fontSize: '0.75rem' }} onClick={() => setStressComponent('sigma_y')}>σy</button>
@@ -182,6 +200,7 @@ export const App: React.FC = () => {
                 elements={results?.elements || [[0, 1, 2, 3]]}
                 stresses={results?.nodal_stresses}
                 stressFrames={results?.stress_frames}
+                nodalHashinFi={results?.nodal_hashin_fi}
                 width={width}
                 height={height}
                 holes={holes}

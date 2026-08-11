@@ -16,7 +16,7 @@ Mesh Stratejisi:
 """
 import numpy as np
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 try:
     import gmsh
@@ -44,6 +44,9 @@ class MeshEngine:
             raise ImportError(
                 "Gmsh kütüphanesi yüklü değil. Lütfen 'pip install gmsh' çalıştırın."
             )
+
+        # FAZ 4: Adaptif Ağ (Mesh) Optimize Edici
+        config, adaptive_info = self._apply_adaptive_meshing(config)
 
         import signal
         orig_signal = signal.signal
@@ -85,10 +88,58 @@ class MeshEngine:
             if config.element_order == 2:
                 gmsh.model.mesh.setOrder(2)
             
-            return self._extract_mesh_data(config)
+            mesh_data = self._extract_mesh_data(config)
+            mesh_data['adaptive_info'] = adaptive_info
+            return mesh_data
         finally:
             if gmsh.isInitialized():
                 gmsh.finalize()
+
+    def _apply_adaptive_meshing(self, config: GeometryConfig) -> Tuple[GeometryConfig, Dict[str, Any]]:
+        """
+        Geometrik darlıklar ve delikler arası minimum mesafeye göre 
+        mesh boyutunu otomatik optimize eder (Auto-Adaptive Meshing).
+        """
+        min_dist = float('inf')
+        holes = config.holes
+        
+        # 1. Delik-Kenar Mesafeleri
+        for h in holes:
+            r = h['diameter'] / 2.0
+            d_left = h['x'] - r
+            d_right = (config.width - h['x']) - r
+            d_bottom = h['y'] - r
+            d_top = (config.height - h['y']) - r
+            min_dist = min(min_dist, d_left, d_right, d_bottom, d_top)
+            
+        # 2. Delik-Delik Mesafeleri
+        n_holes = len(holes)
+        for i in range(n_holes):
+            for j in range(i + 1, n_holes):
+                dx = holes[i]['x'] - holes[j]['x']
+                dy = holes[i]['y'] - holes[j]['y']
+                dist_center = np.hypot(dx, dy)
+                r_sum = (holes[i]['diameter'] + holes[j]['diameter']) / 2.0
+                d_edge = dist_center - r_sum
+                min_dist = min(min_dist, d_edge)
+                
+        is_adapted = False
+        adaptive_global = config.mesh_size_global
+        adaptive_hole = config.mesh_size_hole
+        
+        if min_dist < config.mesh_size_global and min_dist > 0:
+            is_adapted = True
+            adaptive_global = max(0.5, round(min_dist / 3.0, 2))
+            adaptive_hole = max(0.1, round(min_dist / 6.0, 2))
+            config.mesh_size_global = adaptive_global
+            config.mesh_size_hole = adaptive_hole
+
+        return config, {
+            "applied": is_adapted,
+            "min_geometric_distance": float(min_dist) if min_dist != float('inf') else 0.0,
+            "adapted_mesh_size_global": adaptive_global,
+            "adapted_mesh_size_hole": adaptive_hole
+        }
     
     def _setup_mesh_fields(self, config: GeometryConfig):
         """Delik çevresinde Distance + Threshold + BoundaryLayer field."""
