@@ -117,14 +117,16 @@ export const App: React.FC = () => {
       />
 
       <main className="dashboard-content">
-        <section>
-          <div className="input-grid">
-            <PlyStacker
+        {/* 3-Column Engineering Layout */}
+        <div className="workstation-layout">
+          
+          {/* LEFT PANEL: Inputs */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto', paddingRight: '8px' }}>
+            <PlyStacker 
               plies={plies}
               materials={materials}
               onChange={setPlies}
             />
-
             <GeometryEditor
               width={width}
               height={height}
@@ -143,113 +145,85 @@ export const App: React.FC = () => {
               onChangePDM={setEnablePDM}
               onChangeCriterion={setFailureCriterion}
             />
-          </div>
-        </section>
-
-        <section className="action-bar">
-          <button
-            className="btn btn-primary"
-            style={{ padding: '12px 36px', fontSize: '1rem', fontWeight: 700, borderRadius: '8px' }}
-            onClick={handleRunAnalysis}
-            disabled={loading}
-          >
-            {loading ? (
-              '⚡ Sonlu Elemanlar (FEM) & Progressive Damage Çözülüyor...'
-            ) : (
-              <>
-                <Play size={20} style={{ fill: 'currentColor' }} /> ▶ ANALİZİ ÇALIŞTIR VE SERTİFİKASYON RAPORU ÜRET
-              </>
+            <button
+              className="btn btn-primary"
+              style={{ padding: '12px 16px', fontSize: '1rem', fontWeight: 700, borderRadius: '8px', width: '100%', flexShrink: 0, marginTop: 'auto' }}
+              onClick={handleRunAnalysis}
+              disabled={loading}
+            >
+              {loading ? '⚡ Çözülüyor...' : '▶ ANALİZİ ÇALIŞTIR'}
+            </button>
+            {error && (
+              <div style={{ background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#f87171', padding: '12px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.9rem' }}>
+                <AlertCircle size={18} /><span>{error}</span>
+              </div>
             )}
-          </button>
-        </section>
-
-        {error && (
-          <div style={{
-            background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)',
-            color: '#f87171', padding: '12px 16px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '10px'
-          }}>
-            <AlertCircle size={20} />
-            <span>{error}</span>
           </div>
-        )}
 
-        <section className="results-section">
-          {/* PDM Result Summary Badge */}
-          {results?.pdm_results && (
-            <div className="glass-panel" style={{ padding: '12px 18px', background: 'rgba(56, 189, 248, 0.1)', border: '1px solid rgba(56, 189, 248, 0.3)', color: '#f0f9ff', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderRadius: '8px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <Flame size={22} style={{ color: '#f59e0b' }} />
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>İleri Düzey Kopma Analizi (Progressive Damage Modeling)</div>
-                  <div style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
-                    İlk Katman Hasar Yükü (FPF): <b>{results.pdm_results.first_ply_failure_load_N.toFixed(0)} N</b> | Nihai Yapısal Göçme Yükü (Ultimate Load): <b>{results.pdm_results.ultimate_load_N.toFixed(0)} N</b>
+          {/* CENTER PANEL: Viewport (Always visible) */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', height: '100%', overflow: 'hidden' }}>
+            {/* Gerilme Kontrol Barı */}
+            <div className="glass-panel" style={{ padding: '10px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', flexShrink: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                <Activity size={18} /> <b>FEM Gerilme Dağılımı</b>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button className={`btn ${stressComponent === 'von_mises' ? 'btn-primary' : 'btn-secondary'}`} style={{ padding: '4px 10px', fontSize: '0.75rem' }} onClick={() => setStressComponent('von_mises')}>Von Mises</button>
+                <button className={`btn ${stressComponent === 'sigma_x' ? 'btn-primary' : 'btn-secondary'}`} style={{ padding: '4px 10px', fontSize: '0.75rem' }} onClick={() => setStressComponent('sigma_x')}>σx</button>
+                <button className={`btn ${stressComponent === 'sigma_y' ? 'btn-primary' : 'btn-secondary'}`} style={{ padding: '4px 10px', fontSize: '0.75rem' }} onClick={() => setStressComponent('sigma_y')}>σy</button>
+                <button className={`btn ${stressComponent === 'tau_xy' ? 'btn-primary' : 'btn-secondary'}`} style={{ padding: '4px 10px', fontSize: '0.75rem' }} onClick={() => setStressComponent('tau_xy')}>τxy</button>
+              </div>
+            </div>
+
+            {/* Contour Plot Visualizer */}
+            <div style={{ flex: 1, minHeight: 0, background: 'var(--bg-card)', borderRadius: '8px', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <ContourPlot
+                nodes={results?.nodes || [[0, 0], [width, 0], [width, height], [0, height]]}
+                elements={results?.elements || [[0, 1, 2, 3]]}
+                stresses={results?.nodal_stresses}
+                stressFrames={results?.stress_frames}
+                width={width}
+                height={height}
+                holes={holes}
+                selectedComponent={stressComponent}
+              />
+            </div>
+            
+            {/* PDM Result Summary Badge */}
+            {results?.pdm_results && (
+              <div className="glass-panel" style={{ padding: '12px', background: 'rgba(56, 189, 248, 0.1)', border: '1px solid rgba(56, 189, 248, 0.3)', color: '#f0f9ff', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderRadius: '8px', flexShrink: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <Flame size={20} style={{ color: '#f59e0b' }} />
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: '0.85rem' }}>İleri Düzey Kopma Analizi (PDM)</div>
+                    <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>FPF Yükü: <b>{results.pdm_results.first_ply_failure_load_N.toFixed(0)} N</b> | Nihai Göçme: <b>{results.pdm_results.ultimate_load_N.toFixed(0)} N</b></div>
                   </div>
                 </div>
+                <div style={{ fontWeight: 700, padding: '4px 10px', borderRadius: '6px', fontSize: '0.75rem', background: results.pdm_results.is_ultimate_failed ? 'rgba(239, 68, 68, 0.25)' : 'rgba(34, 197, 94, 0.25)', color: results.pdm_results.is_ultimate_failed ? '#f87171' : '#4ade80' }}>
+                  {results.pdm_results.is_ultimate_failed ? 'ULTIMATE FAIL' : 'PASS'}
+                </div>
               </div>
-              <div style={{ fontWeight: 700, padding: '4px 12px', borderRadius: '6px', fontSize: '0.85rem', background: results.pdm_results.is_ultimate_failed ? 'rgba(239, 68, 68, 0.25)' : 'rgba(34, 197, 94, 0.25)', color: results.pdm_results.is_ultimate_failed ? '#f87171' : '#4ade80' }}>
-                {results.pdm_results.is_ultimate_failed ? 'NİHAİ KOPMA GERÇEKLEŞTİ (ULTIMATE FAIL)' : 'NİHAİ TAŞIMA KAPASİTESİ UYGUN (PASS)'}
-              </div>
-            </div>
-          )}
-
-          {/* Gerilme Kontrol Barı */}
-          <div className="glass-panel" style={{ padding: '10px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-              <Activity size={18} /> <b>Sonlu Elemanlar (FEM) Gerilme Dağılım Haritası</b>
-            </div>
-
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button
-                className={`btn ${stressComponent === 'von_mises' ? 'btn-primary' : 'btn-secondary'}`}
-                style={{ padding: '5px 12px', fontSize: '0.8rem' }}
-                onClick={() => setStressComponent('von_mises')}
-              >
-                Von Mises
-              </button>
-              <button
-                className={`btn ${stressComponent === 'sigma_x' ? 'btn-primary' : 'btn-secondary'}`}
-                style={{ padding: '5px 12px', fontSize: '0.8rem' }}
-                onClick={() => setStressComponent('sigma_x')}
-              >
-                σx
-              </button>
-              <button
-                className={`btn ${stressComponent === 'sigma_y' ? 'btn-primary' : 'btn-secondary'}`}
-                style={{ padding: '5px 12px', fontSize: '0.8rem' }}
-                onClick={() => setStressComponent('sigma_y')}
-              >
-                σy
-              </button>
-              <button
-                className={`btn ${stressComponent === 'tau_xy' ? 'btn-primary' : 'btn-secondary'}`}
-                style={{ padding: '5px 12px', fontSize: '0.8rem' }}
-                onClick={() => setStressComponent('tau_xy')}
-              >
-                τxy
-              </button>
-            </div>
+            )}
           </div>
 
-          {/* Contour Plot Visualizer */}
-          <ContourPlot
-            nodes={results?.nodes || [[0, 0], [width, 0], [width, height], [0, height]]}
-            elements={results?.elements || [[0, 1, 2, 3]]}
-            stresses={results?.nodal_stresses}
-            stressFrames={results?.stress_frames}
-            width={width}
-            height={height}
-            holes={holes}
-            selectedComponent={stressComponent}
-          />
+          {/* RIGHT PANEL: Results & Properties */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto', paddingLeft: '8px' }}>
+            {results ? (
+              <>
+                <ResultsSummary results={results} />
+                <FailureTable plyResults={results.ply_results} criticalPlyIndex={results.critical_ply} />
+              </>
+            ) : (
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', border: '1px dashed var(--border-color)', borderRadius: '8px' }}>
+                <div style={{ textAlign: 'center', padding: '20px' }}>
+                  <Activity size={32} style={{ margin: '0 auto 12px', opacity: 0.5 }} />
+                  <p style={{ fontSize: '0.9rem' }}>Analiz sonuçları burada görüntülenecektir.</p>
+                </div>
+              </div>
+            )}
+          </div>
 
-          {/* Analiz Sonuç Panelleri */}
-          {results && (
-            <>
-              <ResultsSummary results={results} />
-              <FailureTable plyResults={results.ply_results} criticalPlyIndex={results.critical_ply} />
-            </>
-          )}
-        </section>
+        </div>
       </main>
     </div>
   );

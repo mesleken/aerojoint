@@ -165,45 +165,16 @@ export const ContourPlot: React.FC<Props> = ({
     return 0.38 - (maxDim - 200) * (0.18 / 800);
   }, [width, height]);
 
-  // Dinamik 2D SVG Annotations
-  const edgeAnnotations = useMemo(() => {
-    const annotList: any[] = [];
-    const fontConfig = { family: 'Inter, system-ui, sans-serif', size: 12, color: '#38bdf8' };
-
-    const stepX = getNiceStep(width, 5);
-    for (let val = 0; val <= width + 0.1; val += stepX) {
-      const roundedVal = Math.round(val);
-      annotList.push({
-        x: roundedVal,
-        y: 0,
-        z: 0,
-        text: `<b>${roundedVal}</b>`,
-        showarrow: false,
-        yshift: -16,
-        font: fontConfig
-      });
-    }
-
-    const stepY = getNiceStep(height, 5);
-    for (let val = 0; val <= height + 0.1; val += stepY) {
-      const roundedVal = Math.round(val);
-      annotList.push({
-        x: 0,
-        y: roundedVal,
-        z: 0,
-        text: `<b>${roundedVal}</b>`,
-        showarrow: false,
-        xshift: -18,
-        font: fontConfig
-      });
-    }
-
-    return annotList;
-  }, [width, height]);
-
   const minDim = Math.max(1, Math.min(width, height));
-  const nticksX = useMemo(() => Math.min(60, Math.max(20, Math.round(30 * (width / minDim)))), [width, height, minDim]);
-  const nticksY = useMemo(() => Math.min(60, Math.max(20, Math.round(30 * (height / minDim)))), [width, height, minDim]);
+  const nticksX = useMemo(() => {
+    if (viewMode === 'critical') return 12; // Kritik bölge zoom'unda sıkışmayı önlemek için az tick
+    return Math.min(60, Math.max(20, Math.round(30 * (width / minDim))));
+  }, [width, minDim, viewMode]);
+  
+  const nticksY = useMemo(() => {
+    if (viewMode === 'critical') return 12;
+    return Math.min(60, Math.max(20, Math.round(30 * (height / minDim))));
+  }, [height, minDim, viewMode]);
 
   const criticalHoleTarget = useMemo(() => {
     if (!holes || holes.length === 0) {
@@ -222,29 +193,62 @@ export const ContourPlot: React.FC<Props> = ({
   }, [holes, criticalPoint]);
 
    // Adaptif Kadraj Formülasyonlu Eksen & Kamera Yapılandırması
-  const { xRange, yRange, cameraConfig } = useMemo(() => {
+  const { xRange, yRange, cameraConfig, sceneAspectMode, sceneAspectRatio } = useMemo(() => {
     if (viewMode === 'critical' && activeStresses && activeStresses.length > 0) {
-      // Delik Çapına (D) Orantılı Tam Delik Merkezi Odaklama (D x 2.8 Radyal Çap)
-      const zoomSpan = Math.max(criticalHoleTarget.diameter * 2.8, 18.0);
+      const minDim = Math.min(width, height);
+      
+      // 1. Temel Odak: Deliğin etrafındaki gerilme yığılmasını tam görmek için çapın 2.5 katı
+      const baseSpan = criticalHoleTarget.diameter * 2.5;
+      
+      // 2. Alt Sınır (Çok küçük delikler için): Bağlamı kaybetmemek adına plakanın kısa kenarının en az %20'si
+      // (Örn: 200x100 plakada minDim=100 -> minSpan = 20. Sizin referansınızla birebir aynı!)
+      const minSpan = minDim * 0.20;
+      
+      // 3. Üst Sınır (Çok büyük delikler için): Plaka dışındaki boşluğa (uzaya) zoom out yapmamak için
+      // plakanın kısa kenarının yarısını (yani ekrana tam oturmasını) geçmesin
+      const maxSpan = minDim * 0.50;
+      
+      // Formül: Temel odağı al, ancak alt ve üst sınırlar dışına taşıyorsa sınırla (clamp)
+      const zoomSpan = Math.max(minSpan, Math.min(baseSpan, maxSpan));
+      
       return {
         xRange: [criticalHoleTarget.x - zoomSpan, criticalHoleTarget.x + zoomSpan],
         yRange: [criticalHoleTarget.y - zoomSpan, criticalHoleTarget.y + zoomSpan],
         cameraConfig: {
           center: { x: 0, y: 0, z: 0 },
-          eye: { x: 0, y: 0, z: 1.8 }
+          eye: { x: 0, y: 0, z: 2.5 }
+        },
+        sceneAspectMode: 'manual',
+        sceneAspectRatio: { 
+          x: 1.5, 
+          y: 1.5, 
+          z: 0.05 
         }
       };
     }
 
-    // Tüm Plakayı Sığdır (Plaka Boyutuna Göre Dinamik Adaptif Kadraj)
-    const fitSpanX = (width / adaptiveScaleFactor) / 2.0;
-    const fitSpanY = (height / adaptiveScaleFactor) / 2.0;
+    // Tüm Plakayı Sığdır (Sıfıra yakın eksen offset'i)
+    const maxDim = Math.max(width, height);
+    const minDim = Math.min(width, height);
+    const ratio = maxDim / minDim;
+    
+    // Kullanıcının kalibrasyon verilerinden türetilen kesin matematiksel formül:
+    // R=1.0 -> M=1.50, R=1.5 -> M=2.25 vb.
+    // Doğrusal Denklem: M = 1.5 * Ratio
+    let m = 1.5 * ratio;
+
     return {
-      xRange: [width / 2.0 - fitSpanX, width / 2.0 + fitSpanX],
-      yRange: [height / 2.0 - fitSpanY, height / 2.0 + fitSpanY],
+      xRange: [-width * 0.01, width * 1.01],
+      yRange: [-height * 0.01, height * 1.01],
       cameraConfig: {
         center: { x: 0, y: 0, z: 0 },
-        eye: { x: 0, y: 0, z: 1.8 } // Fit plate (uzak kamera)
+        eye: { x: 0, y: 0, z: 2.5 }
+      },
+      sceneAspectMode: 'manual',
+      sceneAspectRatio: { 
+        x: m * (width / maxDim), 
+        y: m * (height / maxDim), 
+        z: 0.05 
       }
     };
   }, [viewMode, criticalPoint, criticalHoleTarget, width, height, activeStresses, adaptiveScaleFactor]);
@@ -255,6 +259,11 @@ export const ContourPlot: React.FC<Props> = ({
       return `📍 Konum: X = ${n[0].toFixed(1)} mm, Y = ${n[1].toFixed(1)} mm<br>⚡ Gerilme: ${val.toFixed(2)} MPa`;
     });
   }, [nodes, intensity]);
+
+  const holeBoundaryTraces = useMemo(() => {
+    // Beyaz halkalar (CAD çizimi) kaldırıldı
+    return [];
+  }, [holes]);
 
   const dataTraces: any[] = [
     {
@@ -279,7 +288,8 @@ export const ContourPlot: React.FC<Props> = ({
       hoverinfo: 'text',
       text: hoverTextList
     },
-    plateBoundaryTrace
+    plateBoundaryTrace,
+    ...holeBoundaryTraces
   ];
 
   if (meshWireframeTrace) {
@@ -287,6 +297,9 @@ export const ContourPlot: React.FC<Props> = ({
   }
 
   const uiRevisionKey = `${viewMode}_${width}_${height}_${criticalPoint.x.toFixed(1)}_${criticalPoint.y.toFixed(1)}_${selectedComponent}_${holes.map(h => `${h.diameter}_${h.x}_${h.y}`).join(',')}`;
+  // Kullanıcının isteği üzerine panel her zaman kare (1:1) kalacak.
+  // Bu sayede yatay/dikey asimetrisi ortadan kalkıyor ve tek formül kusursuz çalışıyor.
+  const viewportAspect = 1.0;
 
   return (
     <div className="glass-panel" style={{ padding: '14px', flex: 1, display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -347,57 +360,60 @@ export const ContourPlot: React.FC<Props> = ({
       )}
 
       {/* Plotly Dinamik Adaptif Kadrajlı Görselleştirici */}
-      <Plot
-        data={dataTraces}
-        layout={{
-          uirevision: uiRevisionKey,
-          autosize: true,
-          margin: { l: 25, r: 85, t: 25, b: 25 },
-          paper_bgcolor: 'rgba(0,0,0,0)',
-          plot_bgcolor: 'rgba(0,0,0,0)',
-          showlegend: false,
-          scene: {
-            annotations: edgeAnnotations,
-            xaxis: {
-              title: { text: 'X (mm)', font: { color: '#38bdf8', size: 12 } },
-              color: '#94a3b8',
-              range: xRange,
-              showgrid: true,
-              gridcolor: '#475569',
-              nticks: nticksX,
-              showticklabels: false,
-              zeroline: true,
-              zerolinecolor: '#06b6d4',
-              zerolinewidth: 3,
-              showbackground: false
-            },
-            yaxis: {
-              title: { text: 'Y (mm)', font: { color: '#38bdf8', size: 12 } },
-              color: '#94a3b8',
-              range: yRange,
-              showgrid: true,
-              gridcolor: '#475569',
-              nticks: nticksY,
-              showticklabels: false,
-              zeroline: true,
-              zerolinecolor: '#06b6d4',
-              zerolinewidth: 3,
-              showbackground: false
-            },
-            zaxis: { visible: false },
-            camera: {
-              center: cameraConfig.center,
-              eye: cameraConfig.eye,
-              up: { x: 0, y: 1, z: 0 },
-              projection: { type: 'orthographic' }
-            },
-            aspectmode: 'data'
-          }
-        }}
-        useResizeHandler={true}
-        style={{ width: '100%', height: '430px' }}
-        config={{ responsive: true, displayModeBar: true }}
-      />
+      <div style={{ width: '100%', maxWidth: '200vh', maxHeight: '100vh', aspectRatio: '1 / 1', display: 'flex', margin: '0 auto', background: 'rgba(0,0,0,0.15)', borderRadius: '8px' }}>
+        <Plot
+          data={dataTraces}
+          layout={{
+            uirevision: uiRevisionKey,
+            autosize: true,
+            margin: { l: 65, r: 85, t: 25, b: 70 },
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            plot_bgcolor: 'rgba(0,0,0,0)',
+            showlegend: false,
+            scene: {
+              xaxis: {
+                title: { text: 'X (mm)', font: { color: '#38bdf8', size: 12 } },
+                color: '#94a3b8',
+                range: xRange,
+                showgrid: true,
+                gridcolor: '#475569',
+                nticks: nticksX,
+                showticklabels: true,
+                zeroline: true,
+                zerolinecolor: '#06b6d4',
+                zerolinewidth: 3,
+                showbackground: false
+              },
+              yaxis: {
+                title: { text: 'Y (mm)', font: { color: '#38bdf8', size: 12 } },
+                color: '#94a3b8',
+                range: yRange,
+                showgrid: true,
+                gridcolor: '#475569',
+                nticks: nticksY,
+                showticklabels: true,
+                zeroline: true,
+                zerolinecolor: '#06b6d4',
+                zerolinewidth: 3,
+                showbackground: false
+              },
+              zaxis: { visible: false },
+              camera: {
+                center: cameraConfig.center,
+                eye: cameraConfig.eye,
+                up: { x: 0, y: 1, z: 0 },
+                // @ts-ignore
+                projection: { type: 'orthographic' }
+              },
+              aspectmode: sceneAspectMode,
+              ...(sceneAspectRatio && { aspectratio: sceneAspectRatio })
+            }
+          }}
+          useResizeHandler={true}
+          style={{ width: '100%', height: '100%' }}
+          config={{ responsive: true, displayModeBar: false }}
+        />
+      </div>
     </div>
   );
 };

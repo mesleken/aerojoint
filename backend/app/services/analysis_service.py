@@ -240,8 +240,8 @@ class AnalysisService:
             'applied_load': total_applied_load,
             'computation_time_ms': (t_end - t_start) * 1000.0,
             'mesh_summary': mesh_stats,
-            'nodes': mesh_data.nodes.tolist(),
-            'elements': mesh_data.elements.tolist(),
+            'nodes': mesh_data.nodes.tolist() if hasattr(mesh_data.nodes, 'tolist') else mesh_data.nodes,
+            'elements': mesh_data.elements.tolist() if hasattr(mesh_data.elements, 'tolist') else mesh_data.elements,
             'nodal_stresses': fem_result.nodal_stresses.tolist()
         }
 

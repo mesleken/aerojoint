@@ -14,7 +14,7 @@ export const FailureTable: React.FC<Props> = ({ plyResults, criticalPlyIndex }) 
           Katman Bazlı Kırılma ve Hashin/Tsai-Wu Değerlendirmesi
         </div>
         <div style={{ fontSize: '0.75rem', color: 'var(--accent-amber)', background: 'rgba(245, 158, 11, 0.15)', padding: '2px 8px', borderRadius: '4px', border: '1px solid rgba(245, 158, 11, 0.3)' }}>
-          ⚠️ : En Yüksek Hasar İndeksli Kritik Katman (Critical Ply)
+          ⚠️ En Kritik Katman: #{criticalPlyIndex + 1} ({plyResults[criticalPlyIndex]?.angle}°) — Kırılma muhtemelen burada başlar.
         </div>
       </div>
 
@@ -48,15 +48,22 @@ export const FailureTable: React.FC<Props> = ({ plyResults, criticalPlyIndex }) 
                   <td style={{ padding: '6px 10px', color: p.hashin_max_fi >= 1.0 ? '#f87171' : 'inherit' }}>
                     {p.hashin_max_fi.toFixed(4)}
                   </td>
-                  <td style={{ padding: '6px 10px', color: 'var(--accent-cyan)' }}>{p.dominant_mode}</td>
+                  <td style={{ padding: '6px 10px', color: 'var(--accent-cyan)' }} title={p.dominant_mode}>
+                    {p.dominant_mode.replace('Matrix Tension', 'Mat-T').replace('Matrix Compression', 'Mat-C').replace('Fiber Tension', 'Fib-T').replace('Fiber Compression', 'Fib-C')}
+                  </td>
                   <td style={{ padding: '6px 10px' }}>{p.tsai_wu_fi.toFixed(4)}</td>
                   <td style={{ padding: '6px 10px', color: p.mos_hashin >= 0 ? '#34d399' : '#f87171' }}>
                     {p.mos_hashin.toFixed(3)}
                   </td>
                   <td style={{ padding: '6px 10px' }}>
-                    <span className={`badge ${p.is_failed ? 'badge-fail' : 'badge-pass'}`}>
-                      {p.is_failed ? 'FAIL' : 'PASS'}
-                    </span>
+                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                      <span className={`badge ${p.is_failed ? 'badge-fail' : 'badge-pass'}`}>
+                        {p.is_failed ? 'FAIL' : 'PASS'}
+                      </span>
+                      {isCrit && (
+                        <span className="badge" style={{ background: 'transparent', color: '#60a5fa', border: '1px solid #3b82f6', padding: '2px 6px' }}>EN KRİTİK</span>
+                      )}
+                    </div>
                   </td>
                 </tr>
               );

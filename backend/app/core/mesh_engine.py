@@ -133,6 +133,7 @@ class MeshEngine:
         gmsh.option.setNumber("Mesh.Algorithm", 8)        # Frontal-Delaunay for Quads
         gmsh.option.setNumber("Mesh.RecombineAll", 1)
         gmsh.option.setNumber("Mesh.RecombinationAlgorithm", 1)  # Blossom
+        gmsh.option.setNumber("Mesh.SubdivisionAlgorithm", 1)    # 100% Quad garantisi için her elemanı quada böler
         gmsh.option.setNumber("Mesh.Smoothing", 10)
         gmsh.option.setNumber("Mesh.ElementOrder", config.element_order)
         gmsh.option.setNumber("Mesh.CharacteristicLengthMax", config.mesh_size_global)
@@ -156,7 +157,7 @@ class MeshEngine:
                 elements_list.append([tag_to_idx[int(n)] for n in row])
         
         nodes = node_coords
-        elements = np.array(elements_list) if elements_list else np.empty((0, 4), dtype=int)
+        elements = elements_list if elements_list else []
         
         # Sınır düğümleri
         boundary = self._identify_boundary_nodes(nodes, config)
